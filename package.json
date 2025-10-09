@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "mobx": "^6.15.0",
+    "mobx-react": "^9.2.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "use-immer": "^0.11.0"
