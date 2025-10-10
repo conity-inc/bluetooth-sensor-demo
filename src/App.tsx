@@ -2,18 +2,17 @@ import { makeAutoObservable, runInAction } from "mobx";
 import { observer } from "mobx-react";
 import { useRef, useState } from "react";
 import "./App.css";
-import type { SensorPacket } from "./BaseInterface";
-import {
-  QsenseInterface,
-  QsenseSensor,
-  type UniversalPacket,
-} from "./QsenseInterface";
+import type { SensorInterface, SensorPacket } from "./BaseInterface";
+import { QsenseInterface, type UniversalPacket } from "./QsenseInterface";
+import { YostSensor } from "./YostInterface";
 
 const App = observer(function App() {
-  const [sensor, setSensor] = useState(undefined as QsenseSensor | undefined);
+  const [sensor, setSensor] = useState(
+    undefined as SensorInterface | undefined
+  );
   const sensorData = useRef(new SensorData()).current;
 
-  const onReceivePacket = useRef((p: UniversalPacket) => {
+  const onReceiveQsensePacket = useRef((p: UniversalPacket) => {
     if (!p.data?.quaternions) return;
     const packets = p.data.quaternions.map((q, i) => {
       return {
@@ -27,16 +26,32 @@ const App = observer(function App() {
     sensorData.streamingQueue.push(...packets);
   }).current;
 
+  const onReceiveYostPacket = useRef((p: SensorPacket) => {
+    sensorData.streamingQueue.push(p);
+  }).current;
+
   return (
     <>
       <h1>Bluetooth Sensor Demo</h1>
       <div className="card">
         <button
-          onClick={async () =>
-            setSensor(await QsenseInterface.connect({ onReceivePacket }))
+          onClick={() =>
+            QsenseInterface.connect({
+              onReceivePacket: onReceiveQsensePacket,
+            }).then(setSensor)
           }
         >
           Connect QSense
+        </button>
+
+        <button
+          onClick={() =>
+            YostSensor.create({
+              onReceivePacket: onReceiveYostPacket,
+            }).then(setSensor)
+          }
+        >
+          Connect Yost
         </button>
       </div>
       <div>
