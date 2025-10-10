@@ -1,4 +1,5 @@
-import type { Packet, Quat, Xyz } from "./BaseInterface";
+import { makeAutoObservable, runInAction } from "mobx";
+import type { Quat, SensorInterface, Xyz } from "./BaseInterface";
 
 // Nordic UART Service (NUS) (https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth/services/nus.html)
 const _bluetooth = navigator.bluetooth;
@@ -6,16 +7,25 @@ const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
-type PacketHandler = (packet: DataPacket) => unknown;
+type PacketHandler = (packet: UniversalPacket) => unknown;
 
-export class QsenseSensor {
-  device: BluetoothDevice;
-  rxChar: BluetoothRemoteGATTCharacteristic;
-  txChar: BluetoothRemoteGATTCharacteristic;
+export class QsenseSensor implements SensorInterface {
+  readonly technology = "QSense";
+  serial?: string;
+  version?: string;
   onReceivePacket: PacketHandler;
-  command?: {
+  private device: BluetoothDevice;
+  private rxChar: BluetoothRemoteGATTCharacteristic;
+  private txChar: BluetoothRemoteGATTCharacteristic;
+  private command?: {
     resolve: (value: ControlPacket) => void;
     reject: (reason: unknown) => unknown;
+  };
+  _connected = false;
+  _streaming = false;
+  startStreamingPromise?: {
+    resolve: (value: unknown) => void;
+    reject: () => void;
   };
 
   constructor({
@@ -33,14 +43,10 @@ export class QsenseSensor {
     this.rxChar = rxChar;
     this.txChar = txChar;
     this.onReceivePacket = onReceivePacket;
+    makeAutoObservable(this);
   }
 
   async init() {
-    // Subscribe to notifications
-    this.device.addEventListener("gattserverdisconnected", () => {
-      console.log("disconnected");
-    });
-
     await this.txChar.startNotifications();
     this.txChar.addEventListener("characteristicvaluechanged", (e) =>
       this.handleData(e)
@@ -52,14 +58,31 @@ export class QsenseSensor {
       new TextEncoder().encode("love")
     );
     await this.rxChar.writeValueWithoutResponse(pinPacket);
+    await new Promise(
+      (resolve, reject) => (this.command = { resolve, reject })
+    ).finally(() => (this.command = undefined));
 
-    console.log("Connected");
-    await this.setValue(QsenseInterface.MemoryAddress.DataMode, [
-      QsenseInterface.DataMode.Optimized,
-    ]);
-    const info = await this.getValue(QsenseInterface.MemoryAddress.DataMode, 1);
-    console.log(info);
-    console.log(`Data mode set to ${info.DataMode}`);
+    const { whoAmI } = await this.getValue(
+      QsenseInterface.MemoryAddress.WhoAmI,
+      4
+    );
+    this.serial = `${(whoAmI as number).toString(16).padStart(8, "0")}`;
+
+    const { version } = await this.getValue(
+      QsenseInterface.MemoryAddress.Version,
+      4
+    );
+    this.version = `${(version as number).toString(16).padStart(8, "0")}`;
+
+    runInAction(() => (this._connected = true));
+  }
+
+  get connected() {
+    return this._connected && !!this.device.gatt?.connected;
+  }
+
+  get streaming() {
+    return this._streaming && this.connected;
   }
 
   async getValue(address: number, length: number): Promise<ControlPacket> {
@@ -84,15 +107,20 @@ export class QsenseSensor {
     ).finally(() => (this.command = undefined))) as ControlPacket;
   }
 
-  handleData(event: Event) {
+  private handleData(event: Event) {
     const value = (event.target as BluetoothRemoteGATTCharacteristic).value;
     if (!value) return;
     const data = QsenseInterface.parsePacket(value);
     if ("control" in data) {
       this.command?.resolve(data);
     } else {
+      this.startStreamingPromise?.resolve(undefined);
       this.onReceivePacket(data);
     }
+  }
+
+  handleDisconnect() {
+    runInAction(() => (this._connected = false));
   }
 
   async startStreaming() {
@@ -103,6 +131,15 @@ export class QsenseSensor {
     await this.rxChar.writeValueWithoutResponse(packet);
     const streamPacket = QsenseInterface.createStreamPacket();
     await this.rxChar.writeValueWithoutResponse(streamPacket);
+    await new Promise((resolve, reject) =>
+      runInAction(() => (this.startStreamingPromise = { resolve, reject }))
+    ).then(() => runInAction(() => (this._streaming = true)));
+  }
+
+  async stopStreaming() {
+    const streamPacket = QsenseInterface.createAbortPacket();
+    await this.rxChar.writeValueWithoutResponse(streamPacket);
+    runInAction(() => (this._streaming = false));
   }
 }
 
@@ -171,7 +208,7 @@ export class QsenseInterface {
       filters: [{ services: [SERVICE_UUID] }],
     });
     device.addEventListener("gattserverdisconnected", () => {
-      console.log("disconnected");
+      sensor?.handleDisconnect();
     });
     if (!device.gatt) return;
 
@@ -304,7 +341,7 @@ export class QsenseInterface {
         QsenseInterface.MemoryAddress.WhoAmI - address,
         true
       );
-      dataInfo[`WhoAmI`] = whoAmI;
+      dataInfo[`whoAmI`] = whoAmI;
     }
 
     if (
@@ -315,7 +352,7 @@ export class QsenseInterface {
         QsenseInterface.MemoryAddress.Id - address,
         true
       );
-      dataInfo[`Id`] = id;
+      dataInfo[`id`] = id;
     }
 
     if (
@@ -327,7 +364,7 @@ export class QsenseInterface {
       const macAddress = Array.from(macBytes)
         .map((b) => b.toString(16).padStart(2, "0"))
         .join(":");
-      dataInfo[`MacAddress`] = macAddress;
+      dataInfo[`macAddress`] = macAddress;
     }
 
     if (
@@ -336,7 +373,7 @@ export class QsenseInterface {
     ) {
       const versionStart = QsenseInterface.MemoryAddress.Version - address;
       const version = new DataView(data.buffer).getUint32(versionStart, true);
-      dataInfo[`Version`] = version;
+      dataInfo[`version`] = version;
     }
 
     if (
@@ -344,7 +381,7 @@ export class QsenseInterface {
       address + length >= QsenseInterface.MemoryAddress.Battery + 1
     ) {
       const battery = data[QsenseInterface.MemoryAddress.Battery - address];
-      dataInfo[`Battery: ${battery}%\n`] = battery;
+      dataInfo[`battery`] = battery;
     }
 
     if (
@@ -353,7 +390,7 @@ export class QsenseInterface {
     ) {
       const motionLevel =
         data[QsenseInterface.MemoryAddress.MotionLevel - address];
-      dataInfo[`MotionLevel`] = motionLevel;
+      dataInfo[`motionLevel`] = motionLevel;
     }
 
     if (
@@ -362,7 +399,7 @@ export class QsenseInterface {
     ) {
       const offsetCompensated =
         data[QsenseInterface.MemoryAddress.OffsetCompensated - address];
-      dataInfo[`OffsetCompensated`] = offsetCompensated;
+      dataInfo[`offsetCompensated`] = offsetCompensated;
     }
 
     if (
@@ -371,7 +408,7 @@ export class QsenseInterface {
     ) {
       const magneticFieldMapped =
         data[QsenseInterface.MemoryAddress.MagneticFieldMapped - address];
-      dataInfo[`MagneticFieldMapped`] = magneticFieldMapped;
+      dataInfo[`magneticFieldMapped`] = magneticFieldMapped;
     }
 
     if (
@@ -381,7 +418,7 @@ export class QsenseInterface {
     ) {
       const magneticFieldProgress =
         data[QsenseInterface.MemoryAddress.MagneticFieldProgress - address];
-      dataInfo[`MagneticFieldProgress`] = magneticFieldProgress;
+      dataInfo[`magneticFieldProgress`] = magneticFieldProgress;
     }
 
     if (
@@ -390,7 +427,7 @@ export class QsenseInterface {
     ) {
       const connectionInterval =
         data[QsenseInterface.MemoryAddress.ConnectionInterval - address];
-      dataInfo[`ConnectionInterval`] = connectionInterval;
+      dataInfo[`connectionInterval`] = connectionInterval;
     }
 
     if (
@@ -399,7 +436,7 @@ export class QsenseInterface {
     ) {
       const syncStatus =
         data[QsenseInterface.MemoryAddress.SyncStatus - address];
-      dataInfo[`SyncStatus`] = syncStatus;
+      dataInfo[`syncStatus`] = syncStatus;
     }
 
     if (
@@ -410,7 +447,7 @@ export class QsenseInterface {
         QsenseInterface.MemoryAddress.Ticks100Hz - address,
         true
       );
-      dataInfo[`Ticks100Hz`] = ticks100Hz;
+      dataInfo[`ticks100Hz`] = ticks100Hz;
     }
 
     if (
@@ -421,7 +458,7 @@ export class QsenseInterface {
         QsenseInterface.MemoryAddress.Pin - address,
         true
       );
-      dataInfo[`Pin`] = pin;
+      dataInfo[`pin`] = pin;
     }
 
     if (
@@ -432,7 +469,7 @@ export class QsenseInterface {
         QsenseInterface.MemoryAddress.Time - address,
         true
       );
-      dataInfo[`Time`] = time;
+      dataInfo[`time`] = time;
     }
 
     if (
@@ -445,7 +482,7 @@ export class QsenseInterface {
         annotationStart,
         true
       );
-      dataInfo[`Annotation`] = annotation;
+      dataInfo[`annotation`] = annotation;
     }
 
     if (
@@ -458,7 +495,7 @@ export class QsenseInterface {
         deviceStateStart,
         true
       );
-      dataInfo[`DeviceState`] = deviceState;
+      dataInfo[`deviceState`] = deviceState;
     }
 
     if (
@@ -471,7 +508,7 @@ export class QsenseInterface {
           QsenseInterface.MemoryAddress.DeviceName - address + 12
         )
       );
-      dataInfo[`Device Name`] = name;
+      dataInfo[`deviceName`] = name;
     }
 
     if (
@@ -479,7 +516,7 @@ export class QsenseInterface {
       address + length >= QsenseInterface.MemoryAddress.DataMode + 1
     ) {
       const dataMode = data[QsenseInterface.MemoryAddress.DataMode - address];
-      dataInfo[`DataMode`] = dataMode;
+      dataInfo[`dataMode`] = dataMode;
     }
 
     if (
@@ -493,9 +530,9 @@ export class QsenseInterface {
       const networkKey = timesyncByte & 0x7f;
 
       if (!isEnabled) {
-        dataInfo[`Timesync`] = { isEnabled };
+        dataInfo[`timesync`] = { isEnabled };
       } else {
-        dataInfo[`Timesync`] = { isEnabled, isMaster, networkKey };
+        dataInfo[`timesync`] = { isEnabled, isMaster, networkKey };
       }
     }
 
@@ -507,7 +544,7 @@ export class QsenseInterface {
         data[QsenseInterface.MemoryAddress.AlgorithmSelection - address] === 0
           ? "9 DoF"
           : "6 DoF";
-      dataInfo[`Algorithm Selection`] = algorithm;
+      dataInfo[`AlgorithmSelection`] = algorithm;
     }
 
     return dataInfo;
@@ -516,7 +553,7 @@ export class QsenseInterface {
   /**
    * @param {Uint8Array} data
    */
-  static parseStreamData(data: Uint8Array): DataPacket {
+  static parseStreamData(data: Uint8Array): UniversalPacket {
     const dataModes = ["Mixed", "Raw", "Quaternion", "Optimized", "Quat+Mag"];
     const accRanges = ["2g", "16g", "4g", "8g"];
     const gyroRanges = [
@@ -620,20 +657,16 @@ export class QsenseInterface {
     const x = dataView.getFloat32(4, true);
     const y = dataView.getFloat32(8, true);
     const z = dataView.getFloat32(12, true);
-    const quaternionData = { w, x, y, z };
+    const quaternion = { w, x, y, z };
 
     // Parse free acceleration data (12 bytes: 3 floats)
     const freeAccX = dataView.getFloat32(16, true);
     const freeAccY = dataView.getFloat32(20, true);
     const freeAccZ = dataView.getFloat32(24, true);
-    const freeAccData = { freeAccX, freeAccY, freeAccZ };
-
-    console.debug("Parsed Quaternion Data:", quaternionData);
-    console.debug("Parsed Free Acceleration Data:", freeAccData);
-
-    const mixedData = [];
+    const freeAcc = { x: freeAccX, y: freeAccY, z: freeAccZ };
 
     // Iterate for each buffered sample to extract raw sensor data
+    const rawData = [];
     for (let i = 0; i < buffering; i++) {
       const offset = 28 + i * 18; // After the first 28 bytes, each sample is 18 bytes
       const nineDof = raw9Dof({
@@ -643,11 +676,16 @@ export class QsenseInterface {
         gyrScale,
         includeMag: true,
       });
-      mixedData.push(nineDof);
+      rawData.push(nineDof);
     }
 
-    console.debug("Parsed Mixed Data:", mixedData);
-    return { quaternionData, freeAccData, mixedData };
+    return {
+      quaternion,
+      freeAcc,
+      accelerometers: rawData.map((d) => d.acc),
+      gyroscopes: rawData.map((d) => d.gyro),
+      magnetometers: rawData.map((d) => d.mag!),
+    };
   }
 
   static parseRawPacket(
@@ -672,7 +710,10 @@ export class QsenseInterface {
     }
 
     console.debug("Parsed Raw Data:", rawData);
-    return rawData;
+    return {
+      accelerometers: rawData.map((d) => d.acc),
+      gyroscopes: rawData.map((d) => d.gyro),
+    };
   }
 
   static parseQuatPacket(array: Uint8Array, buffering: number) {
@@ -690,7 +731,7 @@ export class QsenseInterface {
     }
 
     console.debug("Parsed Quaternions:", quaternions);
-    return quaternions;
+    return { quaternions };
   }
 
   static parseOptimizedPacket(
@@ -699,13 +740,12 @@ export class QsenseInterface {
     accScale: number,
     gyrScale: number
   ) {
-    console.debug("Parsing Optimized Packet", array, buffering);
     // C# uses HEADER_LENGTH offset and parses quaternion and then raw data
     const HEADER_LENGTH = QsenseInterface.HEADER_LENGTH;
     const dataView = new DataView(array.buffer);
 
     // Parse quaternion data (buffering samples, each 8 bytes: 4 x int16)
-    const quaternionData = [];
+    const quaternions = [];
     let index = HEADER_LENGTH;
     for (let j = 0; j < buffering; j++) {
       // C#: W,X,Y,Z = int16/32767.0f
@@ -713,7 +753,7 @@ export class QsenseInterface {
       const x = dataView.getInt16(index + 2, true) / 32767.0;
       const y = dataView.getInt16(index + 4, true) / 32767.0;
       const z = dataView.getInt16(index + 6, true) / 32767.0;
-      quaternionData.push({ w, x, y, z });
+      quaternions.push({ w, x, y, z });
       index += 8;
     }
     // Skip unused quaternion slots (C# does index += 8 * (10 - buffering))
@@ -733,31 +773,31 @@ export class QsenseInterface {
       index += 12;
     }
 
-    console.debug("Parsed Quaternion Data:", quaternionData);
-    console.debug("Parsed Raw Data:", rawData);
-    return { quaternionData, rawData };
+    return {
+      quaternions,
+      accelerometers: rawData.map((d) => d.acc),
+      gyroscopes: rawData.map((d) => d.gyro),
+    };
   }
 
   static parseQuatMagPacket(array: Uint8Array, buffering: number) {
-    console.debug("Parsing Quaternion+Magnetic Packet", array, buffering);
     const dataView = new DataView(array.buffer);
 
-    const quatMagData = [];
-
+    const quaternions = [];
+    const magnetometers = [];
     for (let i = 0; i < buffering; i++) {
       const offset = i * 28; // Each entry is 28 bytes (16 for quaternion, 12 for magnetometer)
       const w = dataView.getFloat32(offset, true);
       const x = dataView.getFloat32(offset + 4, true);
       const y = dataView.getFloat32(offset + 8, true);
       const z = dataView.getFloat32(offset + 12, true);
-
       const mag = magOnly({ dataView, position: offset + 16 });
 
-      quatMagData.push({ quat: { w, x, y, z }, mag });
+      quaternions.push({ w, x, y, z });
+      magnetometers.push(mag);
     }
 
-    console.debug("Parsed Quaternion+Magnetic Data:", quatMagData);
-    return quatMagData;
+    return { quaternions, magnetometers };
   }
 }
 
@@ -821,24 +861,18 @@ function magOnly({
 
 export type ControlPacket = Record<string, unknown>;
 
-export type DataPacket = {
+export type UniversalPacket = {
   timestamp: Date;
   battery: number;
-  data?:
-    | Packet[]
-    | {
-        quaternionData: Quat;
-        freeAccData: {
-          freeAccX: number;
-          freeAccY: number;
-          freeAccZ: number;
-        };
-        mixedData: Packet[];
-      }
-    | Quat[]
-    | { quat: Quat; mag: Xyz }[]
-    | {
-        quaternionData: Quat[];
-        rawData: Packet[];
-      };
+  data?: {
+    quaternion?: Quat;
+    quaternions?: Quat[];
+    freeAcc?: Xyz;
+    accelerometer?: Xyz;
+    accelerometers?: Xyz[];
+    gyroscope?: Xyz;
+    gyroscopes?: Xyz[];
+    magnetometer?: Xyz;
+    magnetometers?: Xyz[];
+  };
 };

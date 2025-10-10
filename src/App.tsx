@@ -1,60 +1,124 @@
-import { makeAutoObservable } from "mobx";
+import { makeAutoObservable, runInAction } from "mobx";
+import { observer } from "mobx-react";
 import { useRef, useState } from "react";
 import "./App.css";
-import type { Quat, Xyz } from "./BaseInterface";
-import { QsenseInterface, QsenseSensor } from "./QsenseInterface";
-import { observer } from "mobx-react";
+import type { SensorPacket } from "./BaseInterface";
+import {
+  QsenseInterface,
+  QsenseSensor,
+  type UniversalPacket,
+} from "./QsenseInterface";
 
 const App = observer(function App() {
   const [sensor, setSensor] = useState(undefined as QsenseSensor | undefined);
-  const [packet, setPacket] = useState(undefined as unknown);
   const sensorData = useRef(new SensorData()).current;
 
-  const onReceivePacket = useRef((packet: unknown) => {
-    sensorData.streamingQueue.push(packet as never);
-    setPacket(packet);
+  const onReceivePacket = useRef((p: UniversalPacket) => {
+    if (!p.data?.quaternions) return;
+    const packets = p.data.quaternions.map((q, i) => {
+      return {
+        time: p.timestamp.getTime() / 1_000,
+        quaternion: q,
+        accelerometer: p.data?.accelerometers?.[i] ?? p.data?.accelerometer,
+        gyroscope: p.data?.gyroscopes?.[i] ?? p.data?.gyroscope,
+        magnetometer: p.data?.magnetometers?.[i] ?? p.data?.magnetometer,
+      };
+    });
+    sensorData.streamingQueue.push(...packets);
   }).current;
 
   return (
     <>
+      <h1>Bluetooth Sensor Demo</h1>
       <div className="card">
         <button
           onClick={async () =>
             setSensor(await QsenseInterface.connect({ onReceivePacket }))
           }
         >
-          Connect
+          Connect QSense
         </button>
       </div>
-      {sensor ? (
+      <div>
+        <h2>Sensor</h2>
+      </div>
+      {sensor?.connected ? (
         <>
-          Sensor connected
+          <p>Sensor Status: Connected</p>
+          <p>Serial: {sensor?.serial}</p>
+          <p>Version: {sensor?.version}</p>
           <div>
-            <button onClick={async () => sensor.startStreaming()}>
-              Start Streaming
-            </button>
+            {sensor.streaming ? (
+              <button onClick={async () => sensor.stopStreaming()}>
+                Stop Streaming
+              </button>
+            ) : (
+              <button onClick={async () => sensor.startStreaming()}>
+                Start Streaming
+              </button>
+            )}
           </div>
         </>
       ) : (
-        "No sensor connected"
+        <p>Sensor Status: Disconnected</p>
       )}
-      <pre>{JSON.stringify(packet, undefined, 2)}</pre>
+
+      <QueueView sensorData={sensorData} canReset={!sensor?.streaming} />
     </>
   );
 });
 
+const QueueView = observer(function ({
+  sensorData,
+  canReset,
+}: {
+  sensorData: SensorData;
+  canReset: boolean;
+}) {
+  return (
+    <div>
+      <h2>Queue</h2>
+      <p>Total Packets: {sensorData.streamingQueue.length}</p>
+      {canReset && (
+        <button onClick={() => sensorData.resetQueue()}>Reset Queue</button>
+      )}
+      {canReset && (
+        <button
+          onClick={() => {
+            const data = JSON.stringify(
+              sensorData.streamingQueue,
+              undefined,
+              2
+            );
+            const blob = new Blob([data], { type: "text/plain" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `Sensor Recording ${new Date().toISOString()}.json`;
+            link.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          Download Queue
+        </button>
+      )}
+      <pre>
+        {JSON.stringify(sensorData.streamingQueue.at(-1), undefined, 2)}
+      </pre>
+    </div>
+  );
+});
+
 class SensorData {
-  streamingQueue: {
-    time: number;
-    quaternion: Quat;
-    accelerometer?: Xyz;
-    gyroscope?: Xyz;
-    magnetometer?: Xyz;
-  }[];
+  streamingQueue: SensorPacket[];
 
   constructor() {
     this.streamingQueue = [];
     makeAutoObservable(this);
+  }
+
+  resetQueue() {
+    runInAction(() => (this.streamingQueue = []));
   }
 }
 
