@@ -1,11 +1,6 @@
 import { makeAutoObservable, runInAction } from "mobx";
 import type { Quat, SensorInterface, SensorPacket, Xyz } from "./BaseInterface";
-
-// Nordic UART Service (NUS) (https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth/services/nus.html)
-const _bluetooth = navigator.bluetooth;
-const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-const RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-const TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+import { getUartDeviceAndChars } from "./uart";
 
 type PacketHandler = (packet: SensorPacket) => unknown;
 
@@ -51,28 +46,13 @@ export class YostSensor implements SensorInterface {
   static async create({ onReceivePacket }: { onReceivePacket: PacketHandler }) {
     let sensor: YostSensor | undefined = undefined;
 
-    // let attempts = 2;
-    // let uart;
-    // while (!uart && attempts--) {
-    //   try {
-    //     uart = await getUartDeviceAndChars();
-    //   } catch (e) {
-    //     if (e instanceof Error && e.message === "Disconnected") {
-    //       console.debug(e);
-    //       await new Promise((resolve) => setTimeout(resolve, 100));
-    //     } else {
-    //       throw e;
-    //     }
-    //   }
-    // }
-    // if (!uart) throw new Error("Unable to get UART device");
-
-    const { device, txChar, rxChar } = await getUartDeviceAndChars();
+    const { device, txChar, rxChar } = await getUartDeviceAndChars({
+      namePrefix: "YL-TSS",
+    });
     device.addEventListener("gattserverdisconnected", () => {
       sensor?.handleDisconnect();
     });
 
-    // Get service
     sensor = new YostSensor({
       device,
       txChar,
@@ -476,62 +456,3 @@ const COMMANDS: ThreespaceCommand[] = [
 export const _COMMANDS_BY_NAME = Object.fromEntries(
   COMMANDS.map((c) => [c.info.name, c])
 );
-
-type UartDeviceAndChars = {
-  device: BluetoothDevice;
-  server: BluetoothRemoteGATTServer;
-  service: BluetoothRemoteGATTService;
-  rxChar: BluetoothRemoteGATTCharacteristic;
-  txChar: BluetoothRemoteGATTCharacteristic;
-};
-
-async function getUartDeviceAndChars({
-  maxAttempts = 10,
-}: {
-  maxAttempts?: number;
-} = {}) {
-  type Resolve = (value: UartDeviceAndChars) => void;
-  let resolve: Resolve = () => {};
-  let reject: (value: Error) => void = () => {};
-  let settled = false;
-  const promise = new Promise((resolve_: Resolve, reject_) => {
-    resolve = resolve_;
-    reject = reject_;
-  }).finally(() => (settled = true));
-
-  // Request device
-  const device = await _bluetooth.requestDevice({
-    filters: [{ services: [SERVICE_UUID] }],
-  });
-  console.log({ device });
-  if (!device.gatt) throw new Error("No GATT server");
-  const server = device.gatt;
-  console.log({ server });
-  // device.addEventListener("gattserverdisconnected", () => {
-  //   console.log("disconnected");
-  //   // reject(new Error("Disconnected"));
-  // });
-
-  // Connect to GATT server
-  console.log("Connecting");
-  let remainingAttempts = maxAttempts;
-  let service, rxChar, txChar;
-  while (!settled && remainingAttempts--) {
-    try {
-      await server.connect();
-      service ??= await server.getPrimaryService(SERVICE_UUID);
-      rxChar ??= await service.getCharacteristic(RX_CHAR_UUID);
-      txChar ??= await service.getCharacteristic(TX_CHAR_UUID);
-      resolve?.({ device, server, service, rxChar, txChar });
-    } catch {
-      console.log("Connection failed. Trying again in 100ms");
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-
-  if (!settled) {
-    reject(new Error(`Unable to connect in ${maxAttempts} attempts`));
-  }
-
-  return promise;
-}

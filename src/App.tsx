@@ -3,7 +3,7 @@ import { observer } from "mobx-react";
 import { useRef, useState } from "react";
 import "./App.css";
 import type { SensorInterface, SensorPacket } from "./BaseInterface";
-import { QsenseInterface, type UniversalPacket } from "./QsenseInterface";
+import { QsenseSensor, type UniversalPacket } from "./QsenseInterface";
 import { YostSensor } from "./YostInterface";
 
 const App = observer(function App() {
@@ -36,7 +36,7 @@ const App = observer(function App() {
       <div className="card">
         <button
           onClick={() =>
-            QsenseInterface.connect({
+            QsenseSensor.create({
               onReceivePacket: onReceiveQsensePacket,
             }).then(setSensor)
           }

@@ -1,11 +1,6 @@
 import { makeAutoObservable, runInAction } from "mobx";
 import type { Quat, SensorInterface, Xyz } from "./BaseInterface";
-
-// Nordic UART Service (NUS) (https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth/services/nus.html)
-const _bluetooth = navigator.bluetooth;
-const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-const RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-const TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+import { getUartDeviceAndChars } from "./uart";
 
 type PacketHandler = (packet: UniversalPacket) => unknown;
 
@@ -44,6 +39,26 @@ export class QsenseSensor implements SensorInterface {
     this.txChar = txChar;
     this.onReceivePacket = onReceivePacket;
     makeAutoObservable(this);
+  }
+
+  static async create({ onReceivePacket }: { onReceivePacket: PacketHandler }) {
+    const { device, txChar, rxChar } = await getUartDeviceAndChars({
+      name: "QSense",
+    });
+    device.addEventListener("gattserverdisconnected", () => {
+      sensor?.handleDisconnect();
+    });
+
+    const sensor = new QsenseSensor({
+      device,
+      txChar,
+      rxChar,
+      onReceivePacket,
+    });
+    await sensor.init();
+    Object.assign(window, { sensor });
+
+    return sensor;
   }
 
   async init() {
@@ -197,42 +212,6 @@ export class QsenseInterface {
   static WHOAMI_VALUE = 0x324d5351; // "QSM2"
   static PIN_VALUE = 0x65766f6c;
   static HEADER_LENGTH = 10;
-
-  static async connect({
-    onReceivePacket,
-  }: {
-    onReceivePacket: PacketHandler;
-  }) {
-    // Request device
-    const device = await _bluetooth.requestDevice({
-      filters: [{ services: [SERVICE_UUID] }],
-    });
-    device.addEventListener("gattserverdisconnected", () => {
-      sensor?.handleDisconnect();
-    });
-    if (!device.gatt) return;
-
-    // Connect to GATT server
-    const server = await device.gatt.connect();
-
-    // Get service
-    const service = await server.getPrimaryService(SERVICE_UUID);
-    // window.service = service
-
-    // Get characteristic
-    const rxChar = await service.getCharacteristic(RX_CHAR_UUID);
-    const txChar = await service.getCharacteristic(TX_CHAR_UUID);
-    const sensor = new QsenseSensor({
-      device,
-      txChar,
-      rxChar,
-      onReceivePacket,
-    });
-    await sensor.init();
-    Object.assign(window, { sensor });
-
-    return sensor;
-  }
 
   static createReadPacket(address: number, length: number) {
     const packet = new Uint8Array(7); // Opcode (1B) + Address (4B) + Length (2B) = 7B
@@ -649,7 +628,6 @@ export class QsenseInterface {
     accScale: number,
     gyrScale: number
   ) {
-    console.debug("Parsing Mixed Packet", array, buffering);
     const dataView = new DataView(array.slice(10).buffer);
 
     // Parse quaternion data (16 bytes: 4 floats)
@@ -694,8 +672,6 @@ export class QsenseInterface {
     accScale: number,
     gyrScale: number
   ) {
-    console.debug("Parsing Raw Packet", array, buffering);
-
     const rawData = [];
     for (let i = 0; i < buffering; i++) {
       const offset = i * 18; // Each raw data entry is 18 bytes (6 floats, 3 for acc, 3 for gyr)
@@ -709,7 +685,6 @@ export class QsenseInterface {
       rawData.push(nineDof);
     }
 
-    console.debug("Parsed Raw Data:", rawData);
     return {
       accelerometers: rawData.map((d) => d.acc),
       gyroscopes: rawData.map((d) => d.gyro),
@@ -717,7 +692,6 @@ export class QsenseInterface {
   }
 
   static parseQuatPacket(array: Uint8Array, buffering: number) {
-    console.debug("Parsing Quaternion Packet", array, buffering);
     const dataView = new DataView(array.buffer);
 
     const quaternions = [];
@@ -730,7 +704,6 @@ export class QsenseInterface {
       quaternions.push({ w, x, y, z });
     }
 
-    console.debug("Parsed Quaternions:", quaternions);
     return { quaternions };
   }
 
