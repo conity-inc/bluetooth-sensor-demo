@@ -6,7 +6,22 @@ import type { SensorInterface, SensorPacket } from "./BaseInterface";
 import { QsenseSensor, type UniversalPacket } from "./QsenseInterface";
 import { YostSensor } from "./YostInterface";
 
-const App = observer(function App() {
+export function App() {
+  const bluetoothAvailable: boolean = !!navigator.bluetooth;
+
+  return (
+    <>
+      <h1>Bluetooth Sensor Demo</h1>
+      {bluetoothAvailable ? (
+        <SensorConnection />
+      ) : (
+        <p>Bluetooth not supported</p>
+      )}
+    </>
+  );
+}
+
+const SensorConnection = observer(function App() {
   const sensorData = useRef(new SensorData()).current;
   const sensor = sensorData.sensor;
 
@@ -30,8 +45,7 @@ const App = observer(function App() {
 
   return (
     <>
-      <h1>Bluetooth Sensor Demo</h1>
-      <div className="card">
+      <div className="button-group">
         <button
           onClick={() =>
             QsenseSensor.create({
@@ -88,39 +102,37 @@ const QueueView = observer(function ({
   sensorData: SensorData;
   canReset: boolean;
 }) {
+  const onDownload = () => {
+    if (!sensorData.sensor) return;
+    const data = JSON.stringify(
+      {
+        technology: sensorData.sensor.technology,
+        serial: sensorData.sensor.serial,
+        version: sensorData.sensor.version,
+        ...formatQueue(sensorData.streamingQueue),
+      },
+      undefined,
+      2
+    );
+    const blob = new Blob([data], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Sensor Recording ${new Date().toISOString()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <h2>Queue</h2>
       <p>Total Packets: {sensorData.streamingQueue.length}</p>
-      {canReset && (
-        <button onClick={() => sensorData.resetQueue()}>Reset Queue</button>
-      )}
-      {canReset && (
-        <button
-          onClick={() => {
-            if (!sensorData.sensor) return;
-            const data = JSON.stringify(
-              {
-                technology: sensorData.sensor.technology,
-                serial: sensorData.sensor.serial,
-                version: sensorData.sensor.version,
-                ...formatQueue(sensorData.streamingQueue),
-              },
-              undefined,
-              2
-            );
-            const blob = new Blob([data], { type: "text/plain" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `Sensor Recording ${new Date().toISOString()}.json`;
-            link.click();
-            URL.revokeObjectURL(url);
-          }}
-        >
-          Download Queue
-        </button>
-      )}
+      <div className="button-group">
+        {canReset && (
+          <button onClick={() => sensorData.resetQueue()}>Reset Queue</button>
+        )}
+        {canReset && <button onClick={onDownload}>Download Queue</button>}
+      </div>
       <pre>
         {JSON.stringify(sensorData.streamingQueue.at(-1), undefined, 2)}
       </pre>
@@ -187,5 +199,3 @@ function formatQueue(packets: SensorPacket[]) {
 
   return { time, quaternion, accelerometer, gyroscope, magnetometer };
 }
-
-export default App;
