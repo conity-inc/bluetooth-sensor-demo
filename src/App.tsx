@@ -13,7 +13,10 @@ export function App() {
     <>
       <h1>Bluetooth Sensor Demo</h1>
       {bluetoothAvailable ? (
-        <SensorConnection />
+        <div className="hbox wrap">
+          <SensorConnection label="Sensor" />
+          {/* <SensorConnection label="Sensor 2" /> */}
+        </div>
       ) : (
         <p>Bluetooth not supported</p>
       )}
@@ -21,7 +24,7 @@ export function App() {
   );
 }
 
-const SensorConnection = observer(function App() {
+const SensorConnection = observer(({ label }: { label: string }) => {
   const sensorData = useRef(new SensorData()).current;
   const sensor = sensorData.sensor;
 
@@ -36,62 +39,70 @@ const SensorConnection = observer(function App() {
         magnetometer: p.data?.magnetometers?.[i] ?? p.data?.magnetometer,
       };
     });
-    sensorData.streamingQueue.push(...packets);
+    runInAction(() => {
+      sensorData.streamingQueue.push(...packets);
+    });
   }).current;
 
   const onReceiveYostPacket = useRef((p: SensorPacket) => {
-    sensorData.streamingQueue.push(p);
+    runInAction(() => {
+      sensorData.streamingQueue.push(p);
+    });
   }).current;
 
   return (
-    <>
-      <div className="button-group">
-        <button
-          onClick={() =>
-            QsenseSensor.create({
-              onReceivePacket: onReceiveQsensePacket,
-            }).then((s) => sensorData.setSensor(s))
-          }
-        >
-          Connect QSense
-        </button>
-
-        <button
-          onClick={() =>
-            YostSensor.create({
-              onReceivePacket: onReceiveYostPacket,
-            }).then((s) => sensorData.setSensor(s))
-          }
-        >
-          Connect Yost
-        </button>
-      </div>
+    <div className="card vbox">
       <div>
-        <h2>Sensor</h2>
-      </div>
-      {sensor?.connected ? (
-        <>
-          <p>Sensor Status: Connected</p>
-          <p>Serial: {sensor?.serial}</p>
-          <p>Version: {sensor?.version}</p>
-          <div>
-            {sensor.streaming ? (
-              <button onClick={async () => sensor.stopStreaming()}>
-                Stop Streaming
-              </button>
-            ) : (
-              <button onClick={async () => sensor.startStreaming()}>
-                Start Streaming
-              </button>
-            )}
-          </div>
-        </>
-      ) : (
-        <p>Sensor Status: Disconnected</p>
-      )}
+        <div>
+          <h2>{label}</h2>
+        </div>
+        <div className="button-group">
+          <button
+            onClick={() => {
+              sensorData.setSensor(undefined);
+              QsenseSensor.create({
+                onReceivePacket: onReceiveQsensePacket,
+              }).then((s) => sensorData.setSensor(s));
+            }}
+          >
+            Connect QSense
+          </button>
 
+          <button
+            onClick={() => {
+              sensorData.setSensor(undefined);
+              YostSensor.create({
+                onReceivePacket: onReceiveYostPacket,
+              }).then((s) => sensorData.setSensor(s));
+            }}
+          >
+            Connect Yost
+          </button>
+        </div>
+        {sensor?.connected ? (
+          <div>
+            <p>Sensor Status: Connected</p>
+            <p>Technology: {sensor?.technology}</p>
+            <p>Serial: {sensor?.serial}</p>
+            <p>Version: {sensor?.version}</p>
+            <div>
+              {sensor.streaming ? (
+                <button onClick={async () => sensor.stopStreaming()}>
+                  Stop Streaming
+                </button>
+              ) : (
+                <button onClick={async () => sensor.startStreaming()}>
+                  Start Streaming
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p>Sensor Status: Disconnected</p>
+        )}
+      </div>
       <QueueView sensorData={sensorData} canReset={!sensor?.streaming} />
-    </>
+    </div>
   );
 });
 
@@ -127,6 +138,13 @@ const QueueView = observer(function ({
     <div>
       <h2>Queue</h2>
       <p>Total Packets: {sensorData.streamingQueue.length}</p>
+      <p>
+        Total Time:{" "}
+        {sensorData.streamingQueue.length &&
+          sensorData.streamingQueue.at(-1)!.time -
+            sensorData.streamingQueue[0].time}
+        s
+      </p>
       <div className="button-group">
         {canReset && (
           <button onClick={() => sensorData.resetQueue()}>Reset Queue</button>
@@ -153,8 +171,9 @@ class SensorData {
     runInAction(() => (this.streamingQueue = []));
   }
 
-  setSensor(sensor: SensorInterface) {
+  setSensor(sensor: SensorInterface | undefined) {
     runInAction(() => {
+      this.sensor?.dispose();
       this.sensor = sensor;
       this.resetQueue();
     });

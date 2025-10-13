@@ -22,6 +22,7 @@ export class QsenseSensor implements SensorInterface {
     resolve: (value: unknown) => void;
     reject: () => void;
   };
+  onDispose: () => void;
 
   constructor({
     device,
@@ -38,6 +39,14 @@ export class QsenseSensor implements SensorInterface {
     this.rxChar = rxChar;
     this.txChar = txChar;
     this.onReceivePacket = onReceivePacket;
+    const ondisconnct = () => this?.handleDisconnect();
+    device.addEventListener("gattserverdisconnected", ondisconnct);
+    const ondata = (e: Event) => this.handleData(e);
+    txChar.addEventListener("characteristicvaluechanged", ondata);
+    this.onDispose = () => {
+      device.removeEventListener("gattserverdisconnected", ondisconnct);
+      txChar.removeEventListener("characteristicvaluechanged", ondata);
+    };
     makeAutoObservable(this);
   }
 
@@ -92,12 +101,21 @@ export class QsenseSensor implements SensorInterface {
     runInAction(() => (this._connected = true));
   }
 
+  dispose() {
+    this.onDispose();
+    this.device.gatt?.disconnect();
+  }
+
   get connected() {
     return this._connected && !!this.device.gatt?.connected;
   }
 
   get streaming() {
     return this._streaming && this.connected;
+  }
+
+  get streamStarting() {
+    return !!this.startStreamingPromise;
   }
 
   async getValue(address: number, length: number): Promise<ControlPacket> {
@@ -568,20 +586,20 @@ export class QsenseInterface {
     const timestamp = new Date(seconds * 1000 + milliseconds);
     const accScale = accScaleFactors[accRangeIndex];
     const gyrScale = gyrScaleFactors[gyroRangeIndex];
-    console.debug(
-      [
-        `Stream Data Header:`,
-        `Data Mode: ${dataModes[mode]}`,
-        `Buffering: ${buffering}`,
-        `Timestamp: ${timestamp.toISOString()}`,
-        `Interference: ${interference}`,
-        `Battery: ${battery}%`,
-        `Annotation: ${annotation}`,
-        `Sync. Status: ${syncStatus}`,
-        `Accelerometer range: ${accRanges[accRangeIndex]}`,
-        `Gyroscope range: ${gyroRanges[gyroRangeIndex]}`,
-      ].join("\n")
-    );
+    // console.debug(
+    //   [
+    //     `Stream Data Header:`,
+    //     `Data Mode: ${dataModes[mode]}`,
+    //     `Buffering: ${buffering}`,
+    //     `Timestamp: ${timestamp.toISOString()}`,
+    //     `Interference: ${interference}`,
+    //     `Battery: ${battery}%`,
+    //     `Annotation: ${annotation}`,
+    //     `Sync. Status: ${syncStatus}`,
+    //     `Accelerometer range: ${accRanges[accRangeIndex]}`,
+    //     `Gyroscope range: ${gyroRanges[gyroRangeIndex]}`,
+    //   ].join("\n")
+    // );
 
     let packet;
     switch (mode) {

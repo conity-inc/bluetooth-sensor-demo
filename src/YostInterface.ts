@@ -1,4 +1,4 @@
-import { makeAutoObservable, runInAction } from "mobx";
+import { action, makeAutoObservable, runInAction } from "mobx";
 import type { Quat, SensorInterface, SensorPacket, Xyz } from "./BaseInterface";
 import { getUartDeviceAndChars } from "./uart";
 
@@ -23,6 +23,7 @@ export class YostSensor implements SensorInterface {
     resolve: (value: unknown) => void;
     reject: () => void;
   };
+  onDispose: () => void;
   private buffer?: DataView;
 
   constructor({
@@ -40,6 +41,14 @@ export class YostSensor implements SensorInterface {
     this.rxChar = rxChar;
     this.txChar = txChar;
     this.onReceivePacket = onReceivePacket;
+    const ondisconnct = () => this?.handleDisconnect();
+    device.addEventListener("gattserverdisconnected", ondisconnct);
+    const ondata = (e: Event) => this.handleData(e);
+    txChar.addEventListener("characteristicvaluechanged", ondata);
+    this.onDispose = () => {
+      device.removeEventListener("gattserverdisconnected", ondisconnct);
+      txChar.removeEventListener("characteristicvaluechanged", ondata);
+    };
     makeAutoObservable(this);
   }
 
@@ -48,9 +57,6 @@ export class YostSensor implements SensorInterface {
 
     const { device, txChar, rxChar } = await getUartDeviceAndChars({
       namePrefix: "YL-TSS",
-    });
-    device.addEventListener("gattserverdisconnected", () => {
-      sensor?.handleDisconnect();
     });
 
     sensor = new YostSensor({
@@ -65,12 +71,8 @@ export class YostSensor implements SensorInterface {
     return sensor;
   }
 
-  async init() {
+  private async init() {
     await this.txChar.startNotifications();
-    this.txChar.addEventListener("characteristicvaluechanged", (e) => {
-      this.handleData(e);
-    });
-
     await this.stopStreaming();
 
     this.serial = await this.getValue("serial_number");
@@ -79,12 +81,21 @@ export class YostSensor implements SensorInterface {
     runInAction(() => (this._connected = true));
   }
 
+  dispose() {
+    this.onDispose();
+    this.device.gatt?.disconnect();
+  }
+
   get connected() {
     return this._connected && !!this.device.gatt?.connected;
   }
 
   get streaming() {
     return this._streaming && this.connected;
+  }
+
+  get streamStarting() {
+    return !!this.startStreamingPromise;
   }
 
   async sendCommand(command: string, property: string = "") {
@@ -113,21 +124,23 @@ export class YostSensor implements SensorInterface {
       value = joinDataViews(this.buffer, value);
     }
     const str = new TextDecoder("utf-8").decode(value);
-    if (!str.endsWith("\n")) {
-      console.debug("Extending buffer");
-      this.buffer = value;
-      return;
-    }
-
-    if (this.buffer) {
-      console.debug("Resetting buffer");
+    const messages = str.split("\r\n");
+    const lastMessage = messages.pop();
+    if (lastMessage) {
+      // console.debug(`Extending buffer ${lastMessage?.length}`);
+      this.buffer = new DataView(
+        new TextEncoder().encode(`${lastMessage}`).buffer
+      );
+    } else if (this.buffer) {
+      // console.debug("Resetting buffer");
       this.buffer = undefined;
     }
 
-    for (const message of str.trim().split("\r\n")) {
+    for (const message of messages) {
       try {
         this.handleMessage(message);
-      } finally {
+      } catch (error) {
+        console.warn(error);
         // Move on to next message regardless
       }
     }
@@ -167,17 +180,19 @@ export class YostSensor implements SensorInterface {
   }
 
   async startStreaming() {
-    await this.sendCommand("!stream_hz=25\n");
+    await this.sendCommand("!stream_hz=100\n");
     await this.sendCommand(
       // Time, Quat (x,y,z,w), Accel, Gyro, Mag
       `!stream_slots=94,0,39,38,40\n`
     );
-    await this.sendCommand(`:85\n`);
-    // await new Promise((resolve, reject) =>
-    //   runInAction(() => (this.startStreamingPromise = { resolve, reject }))
-    // ).then(() =>
-    runInAction(() => (this._streaming = true));
-    // );
+    await this.rxChar.writeValue(new TextEncoder().encode(`:85\n`));
+    await new Promise((resolve, reject) =>
+      runInAction(() => {
+        this.startStreamingPromise = { resolve, reject };
+      })
+    )
+      .then(action(() => (this._streaming = true)))
+      .finally(action(() => (this.startStreamingPromise = undefined)));
   }
 
   async stopStreaming() {
@@ -187,6 +202,7 @@ export class YostSensor implements SensorInterface {
     runInAction(() => (this._streaming = false));
   }
 }
+
 const RESPONSE_PATTERN = /^[0-9]+,[0-9]+$/g;
 
 const ERROR_CODES: Record<number, string> = {

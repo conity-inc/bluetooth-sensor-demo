@@ -1,5 +1,4 @@
 // Nordic UART Service (NUS) (https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth/services/nus.html)
-const _bluetooth = navigator.bluetooth;
 const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
@@ -15,10 +14,12 @@ type UartDeviceAndChars = {
 export async function getUartDeviceAndChars({
   name,
   namePrefix,
-  maxAttempts = 10,
+  timeout = 5_000,
+  maxAttempts = 3,
 }: {
   name?: string;
   namePrefix?: string;
+  timeout?: number;
   maxAttempts?: number;
 } = {}) {
   type Resolve = (value: UartDeviceAndChars) => void;
@@ -31,7 +32,7 @@ export async function getUartDeviceAndChars({
   }).finally(() => (settled = true));
 
   // Request device
-  const device = await _bluetooth.requestDevice({
+  const device = await navigator.bluetooth.requestDevice({
     filters: [{ services: [SERVICE_UUID], name, namePrefix }],
   });
   if (!device.gatt) throw new Error("No GATT server");
@@ -42,6 +43,11 @@ export async function getUartDeviceAndChars({
   // });
 
   // Connect to GATT server
+  setTimeout(() => {
+    if (settled) return;
+    reject(new Error(`Unable to connect in ${timeout / 1000} seconds`));
+    server.disconnect();
+  }, timeout);
   let remainingAttempts = maxAttempts;
   let service, rxChar, txChar;
   while (!settled && remainingAttempts--) {

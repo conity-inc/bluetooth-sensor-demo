@@ -29,9 +29,10 @@ export interface SensorInterface {
   technology: string;
   serial?: string;
   version?: string;
-  init(): Promise<void>;
+  dispose(): void;
   startStreaming(): Promise<void>;
   stopStreaming(): Promise<void>;
   connected: boolean;
   streaming: boolean;
+  streamStarting: boolean;
 }

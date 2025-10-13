@@ -47,6 +47,40 @@ button:focus-visible {
   gap: 1rem;
 }
 
+.card {
+  border-radius: 1rem;
+  border: 1px solid #7777;
+  padding: 1rem;
+}
+
+.hbox {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 1rem;
+
+  &.wrap {
+    flex-wrap: wrap;
+  }
+}
+
+.vbox {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 1rem;
+}
+
+h2 {
+  margin-block-start: 0rem;
+  margin-block-end: 0.5rem;
+  margin-inline: 0rem;
+}
+
+p {
+  margin: 0.25rem 0rem;
+}
+
 @media (prefers-color-scheme: light) {
   :root {
     color: #111;
