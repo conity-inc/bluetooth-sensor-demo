@@ -1,10 +1,11 @@
 import { makeAutoObservable, runInAction } from "mobx";
 import { observer } from "mobx-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import "./App.css";
 import type { SensorInterface, SensorPacket } from "./BaseInterface";
 import { QsenseSensor, type UniversalPacket } from "./QsenseInterface";
 import { YostSensor } from "./YostInterface";
+import { NoraxonSensor } from "./NoraxonInterface";
 
 export function App() {
   const bluetoothAvailable: boolean = !!navigator.bluetooth;
@@ -14,8 +15,8 @@ export function App() {
       <h1>Bluetooth Sensor Demo</h1>
       {bluetoothAvailable ? (
         <div className="hbox wrap">
-          <SensorConnection label="Sensor" />
-          {/* <SensorConnection label="Sensor 2" /> */}
+          <SensorConnection label="Sensor 1" />
+          <SensorConnection label="Sensor 2" />
         </div>
       ) : (
         <p>Bluetooth not supported</p>
@@ -27,6 +28,13 @@ export function App() {
 const SensorConnection = observer(({ label }: { label: string }) => {
   const sensorData = useRef(new SensorData()).current;
   const sensor = sensorData.sensor;
+  const [showOtherTechs, setShowOtherTechs] = useState(false);
+
+  const onReceiveNoraxonPacket = useRef((p: SensorPacket[]) => {
+    runInAction(() => {
+      sensorData.streamingQueue.push(...p);
+    });
+  }).current;
 
   const onReceiveQsensePacket = useRef((p: UniversalPacket) => {
     if (!p.data?.quaternions) return;
@@ -60,24 +68,46 @@ const SensorConnection = observer(({ label }: { label: string }) => {
           <button
             onClick={() => {
               sensorData.setSensor(undefined);
-              QsenseSensor.create({
-                onReceivePacket: onReceiveQsensePacket,
+              NoraxonSensor.create({
+                onReceivePacket: onReceiveNoraxonPacket,
               }).then((s) => sensorData.setSensor(s));
             }}
           >
-            Connect QSense
+            Connect Noraxon
           </button>
 
-          <button
-            onClick={() => {
-              sensorData.setSensor(undefined);
-              YostSensor.create({
-                onReceivePacket: onReceiveYostPacket,
-              }).then((s) => sensorData.setSensor(s));
-            }}
-          >
-            Connect Yost
-          </button>
+          {showOtherTechs ? (
+            <>
+              <button
+                onClick={() => {
+                  sensorData.setSensor(undefined);
+                  QsenseSensor.create({
+                    onReceivePacket: onReceiveQsensePacket,
+                  }).then((s) => sensorData.setSensor(s));
+                }}
+              >
+                Connect QSense
+              </button>
+
+              <button
+                onClick={() => {
+                  sensorData.setSensor(undefined);
+                  YostSensor.create({
+                    onReceivePacket: onReceiveYostPacket,
+                  }).then((s) => sensorData.setSensor(s));
+                }}
+              >
+                Connect Yost
+              </button>
+            </>
+          ) : (
+            <div
+              style={{ cursor: "default", color: "#0000" }}
+              onClick={() => setShowOtherTechs(!showOtherTechs)}
+            >
+              Show Other Technologies
+            </div>
+          )}
         </div>
         {sensor?.connected ? (
           <div>
