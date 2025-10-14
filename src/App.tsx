@@ -3,9 +3,10 @@ import { observer } from "mobx-react";
 import { useRef, useState } from "react";
 import "./App.css";
 import type { SensorInterface, SensorPacket } from "./BaseInterface";
+import { LinePlot } from "./LinePlot";
+import { NoraxonSensor } from "./NoraxonInterface";
 import { QsenseSensor, type UniversalPacket } from "./QsenseInterface";
 import { YostSensor } from "./YostInterface";
-import { NoraxonSensor } from "./NoraxonInterface";
 
 export function App() {
   const bluetoothAvailable: boolean = !!navigator.bluetooth;
@@ -164,6 +165,8 @@ const QueueView = observer(function ({
     URL.revokeObjectURL(url);
   };
 
+  const data = sensorData.streamingQueue.slice(-500);
+
   return (
     <div>
       <h2>Queue</h2>
@@ -181,9 +184,22 @@ const QueueView = observer(function ({
         )}
         {canReset && <button onClick={onDownload}>Download Queue</button>}
       </div>
-      <pre>
-        {JSON.stringify(sensorData.streamingQueue.at(-1), undefined, 2)}
-      </pre>
+      {data.length > 0 && (
+        <LinePlot
+          xdata={data.map((p) => p.time)}
+          ydata={[
+            data.map((p) => p.quaternion.x),
+            data.map((p) => p.quaternion.y),
+            data.map((p) => p.quaternion.z),
+            data.map((p) => p.quaternion.w),
+          ]}
+        />
+      )}
+      {sensorData.streamingQueue.length > 0 && (
+        <pre>
+          {JSON.stringify(sensorData.streamingQueue.at(-1), undefined, 2)}
+        </pre>
+      )}
     </div>
   );
 });
