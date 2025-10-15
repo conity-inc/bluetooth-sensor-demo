@@ -1,6 +1,6 @@
 import { makeAutoObservable, runInAction } from "mobx";
 import { observer } from "mobx-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import type { SensorInterface, SensorPacket } from "./BaseInterface";
 import { LinePlot } from "./LinePlot";
@@ -9,18 +9,36 @@ import { QsenseSensor, type UniversalPacket } from "./QsenseInterface";
 import { YostSensor } from "./YostInterface";
 
 export function App() {
-  const bluetoothAvailable: boolean = !!navigator.bluetooth;
+  const bluetoothSupported: boolean = !!navigator.bluetooth;
+  const [bluetoothAvailable, setBluetoothAvailable] = useState(
+    undefined as boolean | undefined
+  );
+  useEffect(() => {
+    navigator.bluetooth
+      ?.getAvailability()
+      .then((a) => setBluetoothAvailable(a));
+  });
 
   return (
     <>
       <h1>Bluetooth Sensor Demo</h1>
-      {bluetoothAvailable ? (
+      {!bluetoothSupported ? (
+        <p className="error-message">
+          Bluetooth not supported in this browser. Try another browser (e.g.
+          Chome or Edge).
+        </p>
+      ) : bluetoothAvailable === undefined ? (
+        <p>Checking for bluetooth availability...</p>
+      ) : !bluetoothAvailable ? (
+        <p className="error-message">
+          Bluetooth not available on this device. Turn on bluetooth or get a
+          bluetooth adapter.
+        </p>
+      ) : (
         <div className="hbox wrap">
           <SensorConnection label="Sensor 1" />
           <SensorConnection label="Sensor 2" />
         </div>
-      ) : (
-        <p>Bluetooth not supported</p>
       )}
     </>
   );

@@ -81,6 +81,15 @@ p {
   margin: 0.25rem 0rem;
 }
 
+.error-message {
+  border-inline-start: 2px solid #f22;
+  padding-inline: 0.25rem;
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1.1em;
+  line-height: 2em;
+}
+
 @media (prefers-color-scheme: light) {
   :root {
     color: #111;
