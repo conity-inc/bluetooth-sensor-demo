@@ -24,7 +24,7 @@ a:hover {
 
 button {
   border-radius: 8px;
-  border: 2px solid transparent;
+  border: 3px solid transparent;
   padding: 0.5rem 1rem;
   font-size: 1rem;
   font-weight: 500;
@@ -32,6 +32,10 @@ button {
   background-color: #444;
   cursor: pointer;
   transition: border-color 0.25s;
+
+  &.selected {
+    box-shadow: 0 0 5px #fffa;
+  }
 }
 button:hover {
   border-color: #56f;
@@ -61,6 +65,10 @@ button:focus-visible {
 
   &.wrap {
     flex-wrap: wrap;
+  }
+
+  > div {
+    flex: 1;
   }
 }
 
@@ -100,5 +108,8 @@ p {
   }
   button {
     background-color: #ddd;
+    &.selected {
+      box-shadow: 0 0 5px #000a;
+    }
   }
 }

@@ -57,6 +57,7 @@ export class NoraxonSensor implements SensorInterface {
     this.onDispose = () => {
       device.removeEventListener("gattserverdisconnected", ondisconnct);
       txChar.removeEventListener("characteristicvaluechanged", ondata);
+      bxChar.removeEventListener("characteristicvaluechanged", onbattery);
     };
     makeAutoObservable(this);
   }
@@ -245,7 +246,6 @@ export async function getDeviceAndChars({
     if (settled) return;
     reject(new Error(`Unable to connect in ${timeout / 1000} seconds`));
     server.disconnect();
-    device.forget();
   }, timeout);
   let remainingAttempts = maxAttempts;
   let service, rxChar, txChar, bxChar;
