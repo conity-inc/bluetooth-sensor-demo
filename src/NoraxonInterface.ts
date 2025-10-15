@@ -62,10 +62,18 @@ export class NoraxonSensor implements SensorInterface {
     makeAutoObservable(this);
   }
 
-  static async create({ onReceivePacket }: { onReceivePacket: PacketHandler }) {
+  static async create({
+    allowedSerials,
+    onReceivePacket,
+  }: {
+    allowedSerials?: string[];
+    onReceivePacket: PacketHandler;
+  }) {
     let sensor: NoraxonSensor | undefined = undefined;
 
-    const { device, txChar, rxChar, bxChar } = await getDeviceAndChars({});
+    const { device, txChar, rxChar, bxChar } = await getDeviceAndChars({
+      allowedSerials,
+    });
 
     sensor = new NoraxonSensor({
       device,
@@ -216,8 +224,10 @@ type DeviceAndChars = {
 };
 
 export async function getDeviceAndChars({
+  allowedSerials,
   maxAttempts = 3,
 }: {
+  allowedSerials?: string[];
   maxAttempts?: number;
 } = {}) {
   type Resolve = (value: DeviceAndChars) => void;
@@ -230,11 +240,15 @@ export async function getDeviceAndChars({
   }).finally(() => (settled = true));
 
   // Request device
+  const services = undefined; // [UUID_MOTION_SVC];
   const device = await navigator.bluetooth.requestDevice({
     // acceptAllDevices: true,
-    filters: [{ namePrefix: "Ultium" }],
-
-    // filters: [{ services: [UUID_MOTION_SVC], namePrefix: "Ultium" }],
+    filters: allowedSerials
+      ? allowedSerials.map((serial) => ({
+          services,
+          namePrefix: `Ultium ${serial}`,
+        }))
+      : [{ services, namePrefix: "Ultium" }],
     optionalServices: [UUID_MOTION_SVC],
   });
   if (!device.gatt) throw new Error("No GATT server");

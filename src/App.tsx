@@ -1,6 +1,6 @@
 import { makeAutoObservable, runInAction } from "mobx";
 import { observer } from "mobx-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import type { SensorInterface, SensorPacket } from "./BaseInterface";
 import { LinePlot } from "./LinePlot";
@@ -9,6 +9,8 @@ import { QsenseSensor, type UniversalPacket } from "./QsenseInterface";
 import { YostSensor } from "./YostInterface";
 
 const workflows = ["Stream Synchronized Sensors", "Stream Individual Sensors"];
+
+const NORAXON_SERIALS = ["614D3", "614D4", "614D5"];
 
 export function App() {
   const bluetoothSupported: boolean = !!navigator.bluetooth;
@@ -98,6 +100,21 @@ const StreamSynchonizedSensors = observer(() => {
     URL.revokeObjectURL(url);
   };
 
+  const usedSerialsStr = sensorData
+    .map(({ sensor }) => sensor?.serial)
+    .filter((s) => s)
+    .join("|");
+  const allowedSerials = useMemo(() => {
+    const usedSerials = usedSerialsStr ? usedSerialsStr.split("|") : [];
+    const allowedSerials =
+      usedSerials.length > 0 &&
+      usedSerials.some((s) => NORAXON_SERIALS.includes(s))
+        ? NORAXON_SERIALS.filter((s) => !usedSerials.includes(s))
+        : undefined;
+    console.debug({ usedSerials, allowedSerials });
+    return allowedSerials;
+  }, [usedSerialsStr]);
+
   return (
     <div className="vbox">
       <div className="card vbox">
@@ -145,7 +162,10 @@ const StreamSynchonizedSensors = observer(() => {
             <div className="card vbox" key={i}>
               <div>
                 <h2>{`Sensor ${i + 1}`}</h2>
-                <SensorConnection sensorData={d} />
+                <SensorConnection
+                  sensorData={d}
+                  allowedSerials={allowedSerials}
+                />
                 <SensorStatus sensor={d.sensor} />
               </div>
               {!!d.sensor?.connected && <QueueView sensorData={d} />}
@@ -191,7 +211,13 @@ const SensorView = observer(
 );
 
 const SensorConnection = observer(
-  ({ sensorData }: { sensorData: SensorData }) => {
+  ({
+    sensorData,
+    allowedSerials,
+  }: {
+    sensorData: SensorData;
+    allowedSerials?: string[];
+  }) => {
     const sensor = sensorData.sensor;
     const [showOtherTechs, setShowOtherTechs] = useState(false);
 
@@ -238,6 +264,7 @@ const SensorConnection = observer(
                 onClick={() => {
                   sensorData.setSensor(undefined);
                   NoraxonSensor.create({
+                    allowedSerials,
                     onReceivePacket: onReceiveNoraxonPacket,
                   }).then((s) => sensorData.setSensor(s));
                 }}
