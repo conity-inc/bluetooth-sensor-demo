@@ -25,10 +25,11 @@ export type SensorPacket = {
   magnetometer?: Xyz;
 };
 
-export interface SensorInterface {
+export interface BluetoothSensor {
   technology: string;
   serial?: string;
   version?: string;
+  battery?: number;
   dispose(): void;
   startStreaming(): Promise<void>;
   stopStreaming(): Promise<void>;

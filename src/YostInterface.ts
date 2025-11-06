@@ -1,10 +1,10 @@
 import { action, makeAutoObservable, runInAction } from "mobx";
-import type { Quat, SensorInterface, SensorPacket, Xyz } from "./BaseInterface";
+import type { Quat, BluetoothSensor, SensorPacket, Xyz } from "./BaseInterface";
 import { getUartDeviceAndChars } from "./uart";
 
 type PacketHandler = (packet: SensorPacket) => unknown;
 
-export class YostSensor implements SensorInterface {
+export class YostSensor implements BluetoothSensor {
   readonly technology = "YostLabs";
   serial?: string;
   version?: string;

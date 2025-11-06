@@ -2,7 +2,7 @@ import { makeAutoObservable, runInAction } from "mobx";
 import { observer } from "mobx-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import type { SensorInterface, SensorPacket } from "./BaseInterface";
+import type { BluetoothSensor, SensorPacket } from "./BaseInterface";
 import { LinePlot } from "./LinePlot";
 import { NoraxonSensor } from "./NoraxonInterface";
 import { QsenseSensor, type UniversalPacket } from "./QsenseInterface";
@@ -65,9 +65,9 @@ export function App() {
 }
 
 const StreamSynchonizedSensors = observer(() => {
-  const sensorData = useRef(
+  const [sensorData] = useState(() =>
     new Array(2).fill(undefined).map((_) => new SensorData())
-  ).current;
+  );
   const [startTime, setStartTime] = useState(undefined as number | undefined);
   const startStreaming = async () => {
     setStartTime(Date.now());
@@ -194,7 +194,7 @@ const SensorView = observer(
     label: string;
     sensorData?: SensorData;
   }) => {
-    const sensorData = useRef(sensorData_ ?? new SensorData()).current;
+    const [sensorData] = useState(() => sensorData_ ?? new SensorData());
     const sensor = sensorData.sensor;
 
     return (
@@ -202,7 +202,16 @@ const SensorView = observer(
         <div>
           <h2>{label}</h2>
           <SensorConnection sensorData={sensorData} />
-          <SensorStatus sensor={sensor} showStreamControls />
+          <SensorStatus
+            sensor={sensor}
+            streamControls={{
+              startStreaming: async () => {
+                sensorData.resetQueue();
+                await sensor?.startStreaming();
+              },
+              stopStreaming: () => sensor?.stopStreaming(),
+            }}
+          />
         </div>
         <QueueView sensorData={sensorData} showControls />
       </div>
@@ -263,7 +272,7 @@ const SensorConnection = observer(
               <button
                 onClick={() => {
                   sensorData.setSensor(undefined);
-                  NoraxonSensor.create({
+                  NoraxonSensor.connect({
                     allowedSerials,
                     onReceivePacket: onReceiveNoraxonPacket,
                   }).then((s) => sensorData.setSensor(s));
@@ -316,10 +325,13 @@ const SensorConnection = observer(
 const SensorStatus = observer(
   ({
     sensor,
-    showStreamControls,
+    streamControls,
   }: {
-    sensor?: SensorInterface;
-    showStreamControls?: boolean;
+    sensor?: BluetoothSensor;
+    streamControls?: {
+      startStreaming: () => unknown;
+      stopStreaming: () => unknown;
+    };
   }) => {
     return sensor?.connected ? (
       <div>
@@ -327,14 +339,15 @@ const SensorStatus = observer(
         <p>Technology: {sensor?.technology}</p>
         <p>Serial: {sensor?.serial}</p>
         <p>Version: {sensor?.version}</p>
-        {showStreamControls && (
+        <p>Battery: {sensor?.battery ? `${sensor?.battery}%` : "unknown"}</p>
+        {streamControls && (
           <div>
             {sensor.streaming ? (
-              <button onClick={async () => sensor.stopStreaming()}>
+              <button onClick={streamControls.stopStreaming}>
                 Stop Streaming
               </button>
             ) : (
-              <button onClick={async () => sensor.startStreaming()}>
+              <button onClick={streamControls.startStreaming}>
                 Start Streaming
               </button>
             )}
@@ -419,7 +432,7 @@ const QueueView = observer(function ({
 });
 
 class SensorData {
-  sensor: SensorInterface | undefined;
+  sensor: BluetoothSensor | undefined;
   streamingQueue: SensorPacket[];
 
   constructor() {
@@ -433,7 +446,7 @@ class SensorData {
     });
   }
 
-  setSensor(sensor: SensorInterface | undefined) {
+  setSensor(sensor: BluetoothSensor | undefined) {
     runInAction(() => {
       this.sensor?.dispose();
       this.sensor = sensor;

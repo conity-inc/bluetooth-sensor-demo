@@ -1,5 +1,5 @@
 import { makeAutoObservable, runInAction } from "mobx";
-import type { SensorInterface, SensorPacket } from "./BaseInterface";
+import type { BluetoothSensor, SensorPacket } from "./BaseInterface";
 
 // Ultium Motion UUIDs (hard-coded)
 const UUID_MOTION_SVC = "9ddca6a5-1ba9-484c-b540-40662f3759f6";
@@ -13,22 +13,25 @@ const BLE_MOTION_CMD_STOP = 0x02;
 
 type PacketHandler = (packets: SensorPacket[]) => unknown;
 
-export class NoraxonSensor implements SensorInterface {
+export class NoraxonSensor implements BluetoothSensor {
   readonly technology = "Noraxon";
   serial?: string;
   version?: string;
+  /** Battery percentage. Possible values are 0, 10, 25, 50, 75. */
+  battery?: number;
   onReceivePacket: PacketHandler;
+  private _onDisconnect: () => unknown = () => {};
   private device: BluetoothDevice;
   private rxChar: BluetoothRemoteGATTCharacteristic;
   private txChar: BluetoothRemoteGATTCharacteristic;
   private bxChar: BluetoothRemoteGATTCharacteristic;
   _connected = false;
   _streaming = false;
-  startStreamingPromise?: {
+  _startStreamingPromise?: {
     resolve: (value: unknown) => void;
     reject: () => void;
   };
-  onDispose: () => void;
+  private onDispose: () => void;
 
   constructor({
     device,
@@ -59,10 +62,10 @@ export class NoraxonSensor implements SensorInterface {
       txChar.removeEventListener("characteristicvaluechanged", ondata);
       bxChar.removeEventListener("characteristicvaluechanged", onbattery);
     };
-    makeAutoObservable(this);
+    makeAutoObservable(this, { onReceivePacket: false });
   }
 
-  static async create({
+  static async connect({
     allowedSerials,
     onReceivePacket,
   }: {
@@ -95,24 +98,57 @@ export class NoraxonSensor implements SensorInterface {
     await this.txChar.startNotifications();
     await this.bxChar.startNotifications();
 
-    runInAction(() => (this._connected = true));
+    this.connected = true;
+  }
+
+  get onDisconnect() {
+    return this._onDisconnect;
+  }
+
+  set onDisconnect(value: () => unknown) {
+    this._onDisconnect = value;
   }
 
   dispose() {
+    this.onDisconnect();
     this.onDispose();
     this.device.gatt?.disconnect();
+  }
+
+  assertConnected() {
+    if (!this.connected) {
+      throw Object.assign(new Error("Sensor not connected"), {
+        id: "NotConnected",
+      });
+    }
   }
 
   get connected() {
     return this._connected && !!this.device.gatt?.connected;
   }
 
+  set connected(value) {
+    this._connected = value;
+  }
+
   get streaming() {
     return this._streaming && this.connected;
   }
 
+  set streaming(value) {
+    this._streaming = value;
+  }
+
   get streamStarting() {
     return !!this.startStreamingPromise;
+  }
+
+  get startStreamingPromise() {
+    return this._startStreamingPromise;
+  }
+
+  set startStreamingPromise(value) {
+    this._startStreamingPromise = value;
   }
 
   private handleData(e: Event) {
@@ -126,26 +162,32 @@ export class NoraxonSensor implements SensorInterface {
   private handleBattery(e: Event) {
     const value = (e.target as BluetoothRemoteGATTCharacteristic).value;
     if (!value) return;
-    console.log("Battery", value);
+    const battery = value.getUint16(0, true);
+    this.battery = battery;
   }
 
   handleDisconnect() {
-    console.debug("NoraxonSensor disconnected");
-    runInAction(() => (this._connected = false));
+    console.debug("NoraxonSensor disconnected", this.onDisconnect);
+    this.connected = false;
+    this.onDisconnect();
   }
 
   async startStreaming() {
+    this.assertConnected();
     await this.rxChar.writeValue(new Uint8Array([BLE_MOTION_CMD_START]));
-    await new Promise((resolve, reject) =>
-      runInAction(() => (this.startStreamingPromise = { resolve, reject }))
-    ).then(() => runInAction(() => (this._streaming = true)));
+    await new Promise(
+      (resolve, reject) => (this.startStreamingPromise = { resolve, reject })
+    ).then(() => (this.streaming = true));
   }
 
   async stopStreaming() {
+    this.assertConnected();
     await this.rxChar.writeValue(new Uint8Array([BLE_MOTION_CMD_STOP]));
-    runInAction(() => (this._streaming = false));
+    this.streaming = false;
   }
 }
+
+const g = 9.80665; // standard gravity in m/s^2
 
 function parseData(value: DataView) {
   if (value.byteLength < 5) return;
@@ -223,12 +265,14 @@ type DeviceAndChars = {
   bxChar: BluetoothRemoteGATTCharacteristic;
 };
 
-export async function getDeviceAndChars({
+function getDeviceAndChars({
   allowedSerials,
-  maxAttempts = 3,
+  maxAttempts = 100,
+  timeout = 10_000,
 }: {
   allowedSerials?: string[];
   maxAttempts?: number;
+  timeout?: number;
 } = {}) {
   type Resolve = (value: DeviceAndChars) => void;
   let resolve: Resolve = () => {};
@@ -239,47 +283,51 @@ export async function getDeviceAndChars({
     reject = reject_;
   }).finally(() => (settled = true));
 
-  // Request device
-  const services = undefined; // [UUID_MOTION_SVC];
-  const device = await navigator.bluetooth.requestDevice({
-    // acceptAllDevices: true,
-    filters: allowedSerials
-      ? allowedSerials.map((serial) => ({
-          services,
-          namePrefix: `Ultium ${serial}`,
-        }))
-      : [{ services, namePrefix: "Ultium" }],
-    optionalServices: [UUID_MOTION_SVC],
-  });
-  if (!device.gatt) throw new Error("No GATT server");
-  const server = device.gatt;
+  (async () => {
+    // Request device
+    const services = undefined; // [UUID_MOTION_SVC];
+    const device = await navigator.bluetooth.requestDevice({
+      // acceptAllDevices: true,
+      filters: allowedSerials
+        ? allowedSerials.map((serial) => ({
+            services,
+            namePrefix: `Ultium ${serial}`,
+          }))
+        : [{ services, namePrefix: "Ultium" }],
+      optionalServices: [UUID_MOTION_SVC],
+    });
+    if (!device.gatt) throw new Error("No GATT server");
+    const server = device.gatt;
 
-  // Connect to GATT server
-  const timeout = 5_000;
-  setTimeout(() => {
-    if (settled) return;
-    reject(new Error(`Unable to connect in ${timeout / 1000} seconds`));
-    server.disconnect();
-  }, timeout);
-  let remainingAttempts = maxAttempts;
-  let service, rxChar, txChar, bxChar;
-  while (!settled && remainingAttempts--) {
-    try {
-      await server.connect();
-      service ??= await server.getPrimaryService(UUID_MOTION_SVC);
-      rxChar ??= await service.getCharacteristic(UUID_MOTION_CMD);
-      txChar ??= await service.getCharacteristic(UUID_MOTION_NOTIFY);
-      bxChar ??= await service.getCharacteristic(UUID_MOTION_BATT_NOTIFY);
-      resolve?.({ device, server, service, rxChar, txChar, bxChar });
-    } catch {
-      console.debug("Connection failed. Trying again in 100ms");
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    // Connect to GATT server
+    const handleReject = (message: string) => {
+      if (settled) return;
+      reject(new Error(message));
+      server.disconnect();
+    };
+    const timeoutHandle = setTimeout(
+      () => handleReject(`Unable to connect in ${timeout / 1000} seconds`),
+      timeout
+    );
+    let remainingAttempts = maxAttempts;
+    let service, rxChar, txChar, bxChar;
+    while (!settled && remainingAttempts--) {
+      try {
+        await server.connect();
+        service ??= await server.getPrimaryService(UUID_MOTION_SVC);
+        rxChar ??= await service.getCharacteristic(UUID_MOTION_CMD);
+        txChar ??= await service.getCharacteristic(UUID_MOTION_NOTIFY);
+        bxChar ??= await service.getCharacteristic(UUID_MOTION_BATT_NOTIFY);
+        resolve?.({ device, server, service, rxChar, txChar, bxChar });
+        clearTimeout(timeoutHandle);
+      } catch {
+        console.debug("Connection failed. Trying again in 250ms");
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
     }
-  }
 
-  if (!settled) {
-    reject(new Error(`Unable to connect in ${maxAttempts} attempts`));
-  }
+    handleReject(`Unable to connect in ${maxAttempts} attempts`);
+  })().catch(reject);
 
   return promise;
 }
