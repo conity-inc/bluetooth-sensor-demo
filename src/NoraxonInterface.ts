@@ -8,9 +8,16 @@ const UUID_MOTION_BATT_NOTIFY = "ecbdbf91-0be3-4779-b874-b3943b878696"; // uint1
 const UUID_MOTION_CMD = "6a419d08-b535-4d6f-90b8-886bc0f6e98c"; // write/cmd
 
 // Command bytes
-const BLE_MOTION_CMD_START = 0x01;
-const BLE_MOTION_CMD_STOP = 0x02;
-
+const BLE_MOTION_CMD_NONE = 0x00;
+const BLE_MOTION_CMD_START = 0x01; // start measurement
+const BLE_MOTION_CMD_STOP = 0x02; // stop measurement
+const BLE_MOTION_CMD_SET_DATAMODE = 0x04; // set datamode, unused for now
+const BLE_MOTION_CMD_FAST_CONVERGE_ENABLE = 0x08; // enable fast converge
+const BLE_MOTION_CMD_FAST_CONVERGE_DISABLE = 0x10; // disable fast converge
+const BLE_MOTION_CMD_MAG_ENABLE = 0x20; // enable magnetometers
+const BLE_MOTION_CMD_MAG_DISABLE = 0x40; // disable magnetometers
+const BLE_MOTION_CMD_DISABLE_40G = 0x41; // disable 40G accelerometer, unused for now
+const BLE_MOTION_CMD_ENABLE_40G = 0x42; // enable 40G accelerometer (lowest noise)
 type PacketHandler = (packets: SensorPacket[]) => unknown;
 
 export class NoraxonSensor implements BluetoothSensor {
@@ -31,6 +38,7 @@ export class NoraxonSensor implements BluetoothSensor {
     resolve: (value: unknown) => void;
     reject: () => void;
   };
+  _fastConvergeEnabled = false;
   private onDispose: () => void;
 
   constructor({
@@ -131,6 +139,14 @@ export class NoraxonSensor implements BluetoothSensor {
     this._connected = value;
   }
 
+  assertStreaming() {
+    if (!this.connected) {
+      throw Object.assign(new Error("Sensor not streaming"), {
+        id: "NotStreaming",
+      });
+    }
+  }
+
   get streaming() {
     return this._streaming && this.connected;
   }
@@ -184,6 +200,41 @@ export class NoraxonSensor implements BluetoothSensor {
     this.assertConnected();
     await this.rxChar.writeValue(new Uint8Array([BLE_MOTION_CMD_STOP]));
     this.streaming = false;
+  }
+
+  // ============= Fast Converge ==============
+
+  get fastConvergeEnabled() {
+    return this._fastConvergeEnabled && this.connected;
+  }
+
+  set fastConvergeEnabled(value) {
+    this._fastConvergeEnabled = value;
+  }
+
+  async performFastConverge() {
+    try {
+      await this.enableFastConverge();
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    } finally {
+      await this.disableFastConverge();
+    }
+  }
+
+  async enableFastConverge() {
+    this.assertStreaming();
+    await this.rxChar.writeValue(
+      new Uint8Array([BLE_MOTION_CMD_FAST_CONVERGE_ENABLE])
+    );
+    this.fastConvergeEnabled = true;
+  }
+
+  async disableFastConverge() {
+    this.assertStreaming();
+    await this.rxChar.writeValue(
+      new Uint8Array([BLE_MOTION_CMD_FAST_CONVERGE_DISABLE])
+    );
+    this.fastConvergeEnabled = false;
   }
 }
 

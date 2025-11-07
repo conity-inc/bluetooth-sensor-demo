@@ -340,19 +340,43 @@ const SensorStatus = observer(
         <p>Serial: {sensor?.serial}</p>
         <p>Version: {sensor?.version}</p>
         <p>Battery: {sensor?.battery ? `${sensor?.battery}%` : "unknown"}</p>
-        {streamControls && (
-          <div>
-            {sensor.streaming ? (
-              <button onClick={streamControls.stopStreaming}>
-                Stop Streaming
+        <div className="vbox">
+          {streamControls && (
+            <div>
+              {sensor.streaming ? (
+                <button onClick={streamControls.stopStreaming}>
+                  Stop Streaming
+                </button>
+              ) : (
+                <button onClick={streamControls.startStreaming}>
+                  Start Streaming
+                </button>
+              )}
+            </div>
+          )}
+          {sensor instanceof NoraxonSensor && (
+            <div className="button-group">
+              <button
+                disabled={!sensor.streaming}
+                onClick={() => sensor.performFastConverge()}
+              >
+                Perform Fast Converge
               </button>
-            ) : (
-              <button onClick={streamControls.startStreaming}>
-                Start Streaming
+              <button
+                disabled={!sensor.streaming}
+                onClick={() => sensor.enableFastConverge()}
+              >
+                Enable Fast Converge
               </button>
-            )}
-          </div>
-        )}
+              <button
+                disabled={!sensor.streaming}
+                onClick={() => sensor.disableFastConverge()}
+              >
+                Disable Fast Converge
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     ) : (
       <p>Sensor Status: Disconnected</p>
