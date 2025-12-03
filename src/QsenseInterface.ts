@@ -70,7 +70,7 @@ export class QsenseSensor implements BluetoothSensor {
     return sensor;
   }
 
-  async init() {
+  private async init() {
     await this.txChar.startNotifications();
     this.txChar.addEventListener("characteristicvaluechanged", (e) =>
       this.handleData(e)

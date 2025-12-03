@@ -99,7 +99,7 @@ export class NoraxonSensor implements BluetoothSensor {
     return sensor;
   }
 
-  async init() {
+  private async init() {
     const [version, serial, ..._] = this.device.name?.split(" ") ?? [];
     this.version = version;
     this.serial = serial;
@@ -135,7 +135,7 @@ export class NoraxonSensor implements BluetoothSensor {
     return this._connected && !!this.device.gatt?.connected;
   }
 
-  set connected(value) {
+  private set connected(value) {
     this._connected = value;
   }
 
@@ -151,7 +151,7 @@ export class NoraxonSensor implements BluetoothSensor {
     return this._streaming && this.connected;
   }
 
-  set streaming(value) {
+  private set streaming(value) {
     this._streaming = value;
   }
 
@@ -163,7 +163,7 @@ export class NoraxonSensor implements BluetoothSensor {
     return this._startStreamingPromise;
   }
 
-  set startStreamingPromise(value) {
+  private set startStreamingPromise(value) {
     this._startStreamingPromise = value;
   }
 
@@ -212,7 +212,7 @@ export class NoraxonSensor implements BluetoothSensor {
     return this._fastConvergeEnabled && this.connected;
   }
 
-  set fastConvergeEnabled(value) {
+  private set fastConvergeEnabled(value) {
     this._fastConvergeEnabled = value;
   }
 
