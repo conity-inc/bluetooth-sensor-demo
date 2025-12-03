@@ -239,13 +239,14 @@ export class NoraxonSensor implements BluetoothSensor {
 }
 
 const g = 9.80665; // standard gravity in m/s^2
+const deg2rad = Math.PI / 180;
 
 function parseData(value: DataView) {
   if (value.byteLength < 5) return;
   const millis0 = value.getUint32(0, true);
   const nFrames = value.getUint8(4);
   let offset = 5;
-  const frameSize = 14; // 7 half-floats (2 bytes each), big-endian halves
+  const frameSize = 20; // 10x 2-byte values, big-endian
   const expected = offset + nFrames * frameSize;
   if (value.byteLength < expected) {
     console.warn(
@@ -259,15 +260,19 @@ function parseData(value: DataView) {
     const ax = value.getFloat16(offset);
     const ay = value.getFloat16(offset + 2);
     const az = value.getFloat16(offset + 4);
-    const q0 = value.getFloat16(offset + 6);
-    const q1 = value.getFloat16(offset + 8);
-    const q2 = value.getFloat16(offset + 10);
-    const q3 = value.getFloat16(offset + 12);
+    const q0 = value.getInt16(offset + 6) / -32767;
+    const q1 = value.getInt16(offset + 8) / -32767;
+    const q2 = value.getInt16(offset + 10) / -32767;
+    const q3 = value.getInt16(offset + 12) / -32767;
+    const gx = value.getFloat16(offset + 14);
+    const gy = value.getFloat16(offset + 16);
+    const gz = value.getFloat16(offset + 18);
     const time = (millis0 + i * 10) / 1_000;
     frames.push({
       time,
-      accelerometer: { x: ax, y: ay, z: az },
+      accelerometer: { x: ax * g, y: ay * g, z: az * g },
       quaternion: { x: q0, y: q1, z: q2, w: q3 },
+      gyroscope: { x: gx * deg2rad, y: gy * deg2rad, z: gz * deg2rad },
     });
     offset += frameSize;
   }
