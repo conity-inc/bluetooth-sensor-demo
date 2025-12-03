@@ -1,4 +1,4 @@
-import { makeAutoObservable, runInAction } from "mobx";
+import { makeAutoObservable } from "mobx";
 import type { BluetoothSensor, SensorPacket } from "./BaseInterface";
 
 // Ultium Motion UUIDs (hard-coded)
@@ -18,7 +18,10 @@ const BLE_MOTION_CMD_MAG_ENABLE = 0x20; // enable magnetometers
 const BLE_MOTION_CMD_MAG_DISABLE = 0x40; // disable magnetometers
 const BLE_MOTION_CMD_DISABLE_40G = 0x41; // disable 40G accelerometer, unused for now
 const BLE_MOTION_CMD_ENABLE_40G = 0x42; // enable 40G accelerometer (lowest noise)
-type PacketHandler = (packets: SensorPacket[]) => unknown;
+type PacketHandler = (
+  packets: SensorPacket[],
+  meta: { arrival: number }
+) => unknown;
 
 export class NoraxonSensor implements BluetoothSensor {
   readonly technology = "Noraxon";
@@ -26,7 +29,7 @@ export class NoraxonSensor implements BluetoothSensor {
   version?: string;
   /** Battery percentage. Possible values are 0, 10, 25, 50, 75. */
   battery?: number;
-  onReceivePacket: PacketHandler;
+  onReceivePacket: PacketHandler = () => {};
   private _onDisconnect: () => unknown = () => {};
   private device: BluetoothDevice;
   private rxChar: BluetoothRemoteGATTCharacteristic;
@@ -46,19 +49,16 @@ export class NoraxonSensor implements BluetoothSensor {
     rxChar,
     txChar,
     bxChar,
-    onReceivePacket,
   }: {
     device: BluetoothDevice;
     rxChar: BluetoothRemoteGATTCharacteristic;
     txChar: BluetoothRemoteGATTCharacteristic;
     bxChar: BluetoothRemoteGATTCharacteristic;
-    onReceivePacket: PacketHandler;
   }) {
     this.device = device;
     this.rxChar = rxChar;
     this.txChar = txChar;
     this.bxChar = bxChar;
-    this.onReceivePacket = onReceivePacket;
     const ondisconnct = () => this?.handleDisconnect();
     device.addEventListener("gattserverdisconnected", ondisconnct);
     const ondata = (e: Event) => this.handleData(e);
@@ -82,31 +82,33 @@ export class NoraxonSensor implements BluetoothSensor {
   }) {
     let sensor: NoraxonSensor | undefined = undefined;
 
+    // Get Bluetooth device, service, and characteristics
     const { device, txChar, rxChar, bxChar } = await getDeviceAndChars({
       allowedSerials,
     });
+    sensor = new NoraxonSensor({ device, txChar, rxChar, bxChar });
+    await sensor.txChar.startNotifications();
+    await sensor.bxChar.startNotifications();
 
-    sensor = new NoraxonSensor({
-      device,
-      txChar,
-      rxChar,
-      bxChar,
-      onReceivePacket,
-    });
-    Object.assign(window, { sensor });
-    await sensor.init();
+    // Set instance props
+    sensor.onReceivePacket = onReceivePacket;
+    const [version, serial] = sensor.device.name?.split(" ") ?? [];
+    sensor.version = version;
+    sensor.serial = serial;
+    sensor.connected = true;
+
+    // Apply default settings
+    await sensor.rxChar.writeValueWithResponse(
+      new Uint8Array([BLE_MOTION_CMD_FAST_CONVERGE_DISABLE])
+    );
+    await sensor.rxChar.writeValueWithResponse(
+      new Uint8Array([BLE_MOTION_CMD_MAG_ENABLE])
+    );
+    await sensor.rxChar.writeValueWithResponse(
+      new Uint8Array([BLE_MOTION_CMD_DISABLE_40G])
+    );
 
     return sensor;
-  }
-
-  private async init() {
-    const [version, serial, ..._] = this.device.name?.split(" ") ?? [];
-    this.version = version;
-    this.serial = serial;
-    await this.txChar.startNotifications();
-    await this.bxChar.startNotifications();
-
-    this.connected = true;
   }
 
   get onDisconnect() {
@@ -172,7 +174,7 @@ export class NoraxonSensor implements BluetoothSensor {
     if (!value) return;
     this.startStreamingPromise?.resolve(undefined);
     const packet = parseData(value);
-    if (packet) this.onReceivePacket(packet);
+    if (packet) this.onReceivePacket(packet, { arrival: e.timeStamp });
   }
 
   private handleBattery(e: Event) {
@@ -188,14 +190,24 @@ export class NoraxonSensor implements BluetoothSensor {
     this.onDisconnect();
   }
 
+  async ping() {
+    this.assertConnected();
+    await this.rxChar.writeValueWithResponse(
+      new Uint8Array([BLE_MOTION_CMD_NONE])
+    );
+  }
+
   async startStreaming() {
     this.assertConnected();
     await this.rxChar.writeValueWithResponse(
       new Uint8Array([BLE_MOTION_CMD_START])
     );
-    await new Promise(
+    const streamStarted = new Promise(
       (resolve, reject) => (this.startStreamingPromise = { resolve, reject })
-    ).then(() => (this.streaming = true));
+    )
+      .then(() => (this.streaming = true))
+      .finally(() => (this.startStreamingPromise = undefined));
+    return { streamStarted };
   }
 
   async stopStreaming() {

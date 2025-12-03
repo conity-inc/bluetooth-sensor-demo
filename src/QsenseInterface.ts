@@ -1,4 +1,4 @@
-import { makeAutoObservable, runInAction } from "mobx";
+import { makeAutoObservable } from "mobx";
 import type { Quat, BluetoothSensor, Xyz } from "./BaseInterface";
 import { getUartDeviceAndChars } from "./uart";
 
@@ -8,7 +8,7 @@ export class QsenseSensor implements BluetoothSensor {
   readonly technology = "QSense";
   serial?: string;
   version?: string;
-  onReceivePacket: PacketHandler;
+  onReceivePacket: PacketHandler = () => {};
   private device: BluetoothDevice;
   private rxChar: BluetoothRemoteGATTCharacteristic;
   private txChar: BluetoothRemoteGATTCharacteristic;
@@ -18,7 +18,7 @@ export class QsenseSensor implements BluetoothSensor {
   };
   _connected = false;
   _streaming = false;
-  startStreamingPromise?: {
+  _startStreamingPromise?: {
     resolve: (value: unknown) => void;
     reject: () => void;
   };
@@ -28,17 +28,14 @@ export class QsenseSensor implements BluetoothSensor {
     device,
     rxChar,
     txChar,
-    onReceivePacket,
   }: {
     device: BluetoothDevice;
     rxChar: BluetoothRemoteGATTCharacteristic;
     txChar: BluetoothRemoteGATTCharacteristic;
-    onReceivePacket: PacketHandler;
   }) {
     this.device = device;
     this.rxChar = rxChar;
     this.txChar = txChar;
-    this.onReceivePacket = onReceivePacket;
     const ondisconnct = () => this?.handleDisconnect();
     device.addEventListener("gattserverdisconnected", ondisconnct);
     const ondata = (e: Event) => this.handleData(e);
@@ -47,7 +44,7 @@ export class QsenseSensor implements BluetoothSensor {
       device.removeEventListener("gattserverdisconnected", ondisconnct);
       txChar.removeEventListener("characteristicvaluechanged", ondata);
     };
-    makeAutoObservable(this);
+    makeAutoObservable(this, { onReceivePacket: false });
   }
 
   static async create({ onReceivePacket }: { onReceivePacket: PacketHandler }) {
@@ -62,8 +59,8 @@ export class QsenseSensor implements BluetoothSensor {
       device,
       txChar,
       rxChar,
-      onReceivePacket,
     });
+    sensor.onReceivePacket = onReceivePacket;
     await sensor.init();
     Object.assign(window, { sensor });
 
@@ -98,7 +95,7 @@ export class QsenseSensor implements BluetoothSensor {
     );
     this.version = `${(version as number).toString(16).padStart(8, "0")}`;
 
-    runInAction(() => (this._connected = true));
+    this.connected = true;
   }
 
   dispose() {
@@ -110,12 +107,28 @@ export class QsenseSensor implements BluetoothSensor {
     return this._connected && !!this.device.gatt?.connected;
   }
 
+  private set connected(value) {
+    this._connected = value;
+  }
+
   get streaming() {
     return this._streaming && this.connected;
   }
 
+  private set streaming(value) {
+    this._streaming = value;
+  }
+
   get streamStarting() {
     return !!this.startStreamingPromise;
+  }
+
+  get startStreamingPromise() {
+    return this._startStreamingPromise;
+  }
+
+  private set startStreamingPromise(value) {
+    this._startStreamingPromise = value;
   }
 
   async getValue(address: number, length: number): Promise<ControlPacket> {
@@ -153,7 +166,7 @@ export class QsenseSensor implements BluetoothSensor {
   }
 
   handleDisconnect() {
-    runInAction(() => (this._connected = false));
+    this.connected = false;
   }
 
   async startStreaming() {
@@ -164,15 +177,18 @@ export class QsenseSensor implements BluetoothSensor {
     await this.rxChar.writeValueWithoutResponse(packet);
     const streamPacket = QsenseInterface.createStreamPacket();
     await this.rxChar.writeValueWithoutResponse(streamPacket);
-    await new Promise((resolve, reject) =>
-      runInAction(() => (this.startStreamingPromise = { resolve, reject }))
-    ).then(() => runInAction(() => (this._streaming = true)));
+    const streamStarted = new Promise(
+      (resolve, reject) => (this.startStreamingPromise = { resolve, reject })
+    )
+      .then(() => (this.streaming = true))
+      .finally(() => (this.startStreamingPromise = undefined));
+    return { streamStarted };
   }
 
   async stopStreaming() {
     const streamPacket = QsenseInterface.createAbortPacket();
     await this.rxChar.writeValueWithoutResponse(streamPacket);
-    runInAction(() => (this._streaming = false));
+    this.streaming = false;
   }
 }
 

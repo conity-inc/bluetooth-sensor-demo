@@ -207,7 +207,9 @@ const SensorView = observer(
             streamControls={{
               startStreaming: async () => {
                 sensorData.resetQueue();
-                await sensor?.startStreaming();
+                await sensor
+                  ?.startStreaming()
+                  .then(({ streamStarted }) => streamStarted);
               },
               stopStreaming: () => sensor?.stopStreaming(),
             }}

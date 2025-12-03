@@ -1,4 +1,4 @@
-import { action, makeAutoObservable, runInAction } from "mobx";
+import { makeAutoObservable } from "mobx";
 import type { Quat, BluetoothSensor, SensorPacket, Xyz } from "./BaseInterface";
 import { getUartDeviceAndChars } from "./uart";
 
@@ -8,7 +8,7 @@ export class YostSensor implements BluetoothSensor {
   readonly technology = "YostLabs";
   serial?: string;
   version?: string;
-  onReceivePacket: PacketHandler;
+  onReceivePacket: PacketHandler = () => {};
   private device: BluetoothDevice;
   private rxChar: BluetoothRemoteGATTCharacteristic;
   private txChar: BluetoothRemoteGATTCharacteristic;
@@ -19,7 +19,7 @@ export class YostSensor implements BluetoothSensor {
   };
   _connected = false;
   _streaming = false;
-  startStreamingPromise?: {
+  _startStreamingPromise?: {
     resolve: (value: unknown) => void;
     reject: () => void;
   };
@@ -30,17 +30,14 @@ export class YostSensor implements BluetoothSensor {
     device,
     rxChar,
     txChar,
-    onReceivePacket,
   }: {
     device: BluetoothDevice;
     rxChar: BluetoothRemoteGATTCharacteristic;
     txChar: BluetoothRemoteGATTCharacteristic;
-    onReceivePacket: PacketHandler;
   }) {
     this.device = device;
     this.rxChar = rxChar;
     this.txChar = txChar;
-    this.onReceivePacket = onReceivePacket;
     const ondisconnct = () => this?.handleDisconnect();
     device.addEventListener("gattserverdisconnected", ondisconnct);
     const ondata = (e: Event) => this.handleData(e);
@@ -49,7 +46,7 @@ export class YostSensor implements BluetoothSensor {
       device.removeEventListener("gattserverdisconnected", ondisconnct);
       txChar.removeEventListener("characteristicvaluechanged", ondata);
     };
-    makeAutoObservable(this);
+    makeAutoObservable(this, { onReceivePacket: false });
   }
 
   static async create({ onReceivePacket }: { onReceivePacket: PacketHandler }) {
@@ -63,9 +60,9 @@ export class YostSensor implements BluetoothSensor {
       device,
       txChar,
       rxChar,
-      onReceivePacket,
     });
     Object.assign(window, { sensor });
+    sensor.onReceivePacket = onReceivePacket;
     await sensor.init();
 
     return sensor;
@@ -78,7 +75,7 @@ export class YostSensor implements BluetoothSensor {
     this.serial = await this.getValue("serial_number");
     this.version = await this.getValue("version_firmware");
 
-    runInAction(() => (this._connected = true));
+    this.connected = true;
   }
 
   dispose() {
@@ -90,12 +87,28 @@ export class YostSensor implements BluetoothSensor {
     return this._connected && !!this.device.gatt?.connected;
   }
 
+  private set connected(value) {
+    this._connected = value;
+  }
+
   get streaming() {
     return this._streaming && this.connected;
   }
 
+  private set streaming(value) {
+    this._streaming = value;
+  }
+
   get streamStarting() {
     return !!this.startStreamingPromise;
+  }
+
+  get startStreamingPromise() {
+    return this._startStreamingPromise;
+  }
+
+  private set startStreamingPromise(value) {
+    this._startStreamingPromise = value;
   }
 
   async sendCommand(command: string, property: string = "") {
@@ -176,7 +189,7 @@ export class YostSensor implements BluetoothSensor {
   }
 
   handleDisconnect() {
-    runInAction(() => (this._connected = false));
+    this.connected = false;
   }
 
   async startStreaming() {
@@ -186,20 +199,19 @@ export class YostSensor implements BluetoothSensor {
       `!stream_slots=94,0,39,38,40\n`
     );
     await this.rxChar.writeValue(new TextEncoder().encode(`:85\n`));
-    await new Promise((resolve, reject) =>
-      runInAction(() => {
-        this.startStreamingPromise = { resolve, reject };
-      })
+    const streamStarted = new Promise(
+      (resolve, reject) => (this.startStreamingPromise = { resolve, reject })
     )
-      .then(action(() => (this._streaming = true)))
-      .finally(action(() => (this.startStreamingPromise = undefined)));
+      .then(() => (this.streaming = true))
+      .finally(() => (this.startStreamingPromise = undefined));
+    return { streamStarted };
   }
 
   async stopStreaming() {
     await this.rxChar.writeValueWithoutResponse(
       new TextEncoder().encode(`:86\n`)
     );
-    runInAction(() => (this._streaming = false));
+    this.streaming = false;
   }
 }
 

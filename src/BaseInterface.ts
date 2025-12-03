@@ -31,7 +31,7 @@ export interface BluetoothSensor {
   version?: string;
   battery?: number;
   dispose(): void;
-  startStreaming(): Promise<void>;
+  startStreaming(): Promise<{ streamStarted: Promise<unknown> }>;
   stopStreaming(): Promise<void>;
   connected: boolean;
   streaming: boolean;
