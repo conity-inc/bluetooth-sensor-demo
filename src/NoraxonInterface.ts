@@ -190,7 +190,9 @@ export class NoraxonSensor implements BluetoothSensor {
 
   async startStreaming() {
     this.assertConnected();
-    await this.rxChar.writeValue(new Uint8Array([BLE_MOTION_CMD_START]));
+    await this.rxChar.writeValueWithResponse(
+      new Uint8Array([BLE_MOTION_CMD_START])
+    );
     await new Promise(
       (resolve, reject) => (this.startStreamingPromise = { resolve, reject })
     ).then(() => (this.streaming = true));
@@ -198,7 +200,9 @@ export class NoraxonSensor implements BluetoothSensor {
 
   async stopStreaming() {
     this.assertConnected();
-    await this.rxChar.writeValue(new Uint8Array([BLE_MOTION_CMD_STOP]));
+    await this.rxChar.writeValueWithResponse(
+      new Uint8Array([BLE_MOTION_CMD_STOP])
+    );
     this.streaming = false;
   }
 
@@ -223,7 +227,7 @@ export class NoraxonSensor implements BluetoothSensor {
 
   async enableFastConverge() {
     this.assertStreaming();
-    await this.rxChar.writeValue(
+    await this.rxChar.writeValueWithResponse(
       new Uint8Array([BLE_MOTION_CMD_FAST_CONVERGE_ENABLE])
     );
     this.fastConvergeEnabled = true;
@@ -231,7 +235,7 @@ export class NoraxonSensor implements BluetoothSensor {
 
   async disableFastConverge() {
     this.assertStreaming();
-    await this.rxChar.writeValue(
+    await this.rxChar.writeValueWithResponse(
       new Uint8Array([BLE_MOTION_CMD_FAST_CONVERGE_DISABLE])
     );
     this.fastConvergeEnabled = false;
